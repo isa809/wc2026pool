@@ -1307,7 +1307,7 @@ function renderMain(){
   const score=calcScore(CU.key);
   return`
   <div class="hero">
-    <div class="pname">${POOL_NAME}</div>
+    <div class="pname">${CURRENT_POOL?CURRENT_POOL.name:APP_NAME}</div>
     <h1>World Cup 2026</h1>
     <p class="sub">3 Prediction Rounds · 225 pts max</p>
   </div>

@@ -427,17 +427,28 @@ const FIREBASE_CONFIG = {
 
 const IS_FIREBASE_CONFIGURED = FIREBASE_CONFIG.apiKey !== "REPLACE_WITH_YOUR_API_KEY";
 
-// Initialize Firebase only if configured
+// Expose the pool functions on window up-front. The implementations below are
+// function declarations, so they are already hoisted and defined at this point.
+// Doing this unconditionally — before any Firebase init — guarantees the
+// Create-Pool handler can always reach createPool, even if Firebase init throws.
+window.loadPool = loadPool;
+window.createPool = createPool;
+window.saveST = saveST;
+window.loadAllPools = loadAllPools;
+window.listenForUpdates = listenForUpdates;
+
+// Initialize Firebase only if configured. Wrap in try/catch so a failed SDK load
+// (blocked CDN, offline, ad-blocker) degrades gracefully to the localStorage
+// fallback instead of throwing and halting the whole script on the "Loading…" screen.
 let db = null;
 if(IS_FIREBASE_CONFIGURED){
-  firebase.initializeApp(FIREBASE_CONFIG);
-  db = firebase.database();
-  // Make pool functions available as window.* so they're accessible everywhere
-  window.loadPool = loadPool;
-  window.createPool = createPool;
-  window.saveST = saveST;
-  window.loadAllPools = loadAllPools;
-  window.listenForUpdates = listenForUpdates;
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.database();
+  }catch(e){
+    console.error("Firebase initialization failed — falling back to localStorage:", e);
+    db = null;
+  }
 }
 
 /* ══ SCORING ══
@@ -3178,13 +3189,13 @@ function startApp(){
   }
 }
 
-if(IS_FIREBASE_CONFIGURED){
+if(db){
   showLoadingScreen();
   startApp();
 } else {
-  // Firebase not configured — localStorage fallback
-  // Still shows the full multi-pool UI using localStorage as the backend
-  console.warn("Firebase not configured — using localStorage fallback");
+  // Firebase not configured (or init failed) — localStorage fallback.
+  // Still shows the full multi-pool UI using localStorage as the backend.
+  console.warn("Firebase unavailable — using localStorage fallback");
 
   const STORE="wc26_";
   // Expose LS globally so super admin functions can access it

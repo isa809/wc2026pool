@@ -141,10 +141,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
   padding:4px;margin:0 16px 16px;flex-wrap:wrap;
 }
 .tab{
-  flex:1;padding:8px 4px;border:none;background:transparent;
+  flex:1 1 auto;padding:8px 4px;border:none;background:transparent;
   border-radius:7px;font-size:11px;font-weight:600;
   font-family:'DM Sans',sans-serif;cursor:pointer;color:var(--muted);
-  white-space:nowrap;min-width:0;transition:all .15s;letter-spacing:.02em;
+  /* Let labels wrap inside the button instead of overflowing and overlapping
+     neighbours when the bar is cramped (e.g. the 6 admin sub-tabs on a phone). */
+  white-space:normal;overflow-wrap:break-word;min-width:0;text-align:center;
+  line-height:1.2;transition:all .15s;letter-spacing:.02em;
 }
 .tab.active{
   background:var(--fifa-blue);color:#fff;
@@ -1321,8 +1324,8 @@ function renderMain(){
   </div>
   <div class="top-bar">
     <div class="av">${CU.displayName.charAt(0).toUpperCase()}</div>
-    <span style="font-weight:600;font-size:15px;flex:1">${CU.displayName}</span>
-    <span id="scoreDisplay" style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--navy)">${score} pts</span>
+    <span style="font-weight:600;font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CU.displayName}</span>
+    <span id="scoreDisplay" style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--navy);flex-shrink:0">${score} pts</span>
     <button class="logout-btn" id="logoutBtn">Log out</button>
   </div>
   <div class="tabs">
@@ -2177,7 +2180,7 @@ function renderAdmin(){
   const tabList=[
     {id:"share",   label:"&#128279; Share"},
     {id:"rounds",  label:"&#127942; Rounds"},
-    {id:"groups",  label:"&#9917; Group Results"},
+    {id:"groups",  label:"&#9917; Groups"},
     {id:"knockout",label:"&#128296; Knockout"},
     {id:"players", label:"&#128101; Players"},
     {id:"settings",label:"&#9881; Settings"}

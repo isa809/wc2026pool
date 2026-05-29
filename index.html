@@ -715,6 +715,70 @@ function isT3Slot(seed){
   return seed.t==="T3";
 }
 
+/* ══ DEMO DATA (super-admin only) ══
+   Populate plausible fake results so the whole app can be exercised end to end.
+   Convention: the "home"/top-feeder team always wins, giving clean, distinct
+   standings and a fully determined bracket. */
+function demoFillGroups(){
+  for(const g in GM){
+    for(const m of GM[g]){
+      ST.results.group[m.id]={result:"W",hg:2,ag:0};  // home wins every match 2-0
+    }
+  }
+  saveST();
+}
+
+function demoFillR32(){
+  // Need full group standings first; auto-fill them if they're not complete.
+  if(Object.keys(actualStandings()).length<Object.keys(GROUPS).length) demoFillGroups();
+  const st=actualStandings();
+  const usedThirds={};
+  const matchups=[];
+  R32_SEEDS.forEach(function(seed,i){
+    function teamFor(side){
+      if(side.t==="T3"){
+        const slot=T3_SLOTS[i];
+        if(slot){
+          // First unused 3rd-place team from this slot's candidate groups.
+          for(const g of slot.groups){
+            const third=st[g]&&st[g].third;
+            if(third&&!usedThirds[third]){usedThirds[third]=true;return third;}
+          }
+          for(const g of slot.groups){const third=st[g]&&st[g].third;if(third)return third;}
+        }
+        return "";
+      }
+      return slotTeam(side,st)||"";
+    }
+    matchups[i]={home:teamFor(seed.a),away:teamFor(seed.b)};
+  });
+  ST.results.koMatches.r32=matchups;
+  for(let i=0;i<16;i++){
+    if(matchups[i].home) ST.results.ko["r32_"+i]=matchups[i].home;  // home wins
+  }
+  saveST();
+}
+
+/* Advance a later knockout round from the previous round's winners.
+   round ∈ {r16,qf,sf,final}. Picks the top-feeder team as the fake winner. */
+function demoFillKo(round){
+  const prevOf={r16:"r32",qf:"r16",sf:"qf",final:"sf"};
+  const count ={r16:8, qf:4, sf:2, final:1};
+  const prev=prevOf[round], n=count[round];
+  if(!prev) return;
+  if(!ST.results.koMatches[round]) ST.results.koMatches[round]=[];
+  for(let i=0;i<n;i++){
+    const home=ST.results.ko[prev+"_"+(2*i)];
+    const away=ST.results.ko[prev+"_"+(2*i+1)];
+    if(home||away) ST.results.koMatches[round][i]={home:home||"",away:away||""};
+    if(home) ST.results.ko[round+"_"+i]=home;  // top-feeder team wins
+  }
+  saveST();
+}
+
+/* Is the current user the super admin (the only one allowed to use demo tools)? */
+function isSuperAdminUser(){return !!(CU&&CU.isSuperAdmin)||IS_SUPER_ADMIN;}
+
 /* Get merged picks across all submitted rounds */
 function getMergedPicks(userKey){
   const u=ST.users[userKey];
@@ -2247,6 +2311,13 @@ function renderAdminGroups(){
     <div class="card-title">Group stage results</div>
     <div class="notice">Enter W/D/L plus goals scored. Goals feed tiebreaker calculations for 3rd place rankings.</div>`;
 
+  if(isSuperAdminUser()){
+    html+=`<div class="notice-blue" style="margin-bottom:10px">
+      <strong>&#127916; Demo tools (super admin)</strong> — fill fake results to test the app end to end.
+      <div style="margin-top:6px"><button class="btn btn-green" id="demoGroupsBtn" style="width:auto;padding:7px 14px;font-size:12px">&#127916; Demo: fill all group results</button></div>
+    </div>`;
+  }
+
   html+=`<div class="group-grid">`;
   for(const g in GM){
     html+=`<div class="g-card"><div class="g-label">Group ${g}</div>`;
@@ -2510,6 +2581,18 @@ function renderAdminKnockout(){
       'Use &#9998; to manually edit team names. Click a result again to clear it.'+
     '</div>'+
     autoFillBtnHtml+
+    (isSuperAdminUser()
+      ?'<div class="notice-blue" style="margin-bottom:8px">'+
+         '<strong>&#127916; Demo tools (super admin)</strong> — populate fake winners round by round. Run in order.'+
+         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+
+           '<button class="btn-sm" id="demoR32Btn">&#127916; Demo R32</button>'+
+           '<button class="btn-sm" id="demoR16Btn">Demo R16</button>'+
+           '<button class="btn-sm" id="demoQfBtn">Demo QF</button>'+
+           '<button class="btn-sm" id="demoSfBtn">Demo SF</button>'+
+           '<button class="btn-sm" id="demoFinalBtn">Demo Final</button>'+
+         '</div>'+
+       '</div>'
+      :'')+
     '<div class="bracket-wrap"><div class="bracket">';
 
   // Build columns from cascade
@@ -2918,6 +3001,17 @@ function bindTab(){
     const filled=autoFillR32Matchups();
     setTab();
   };
+
+  /* demo tools (super admin only) */
+  if(isSuperAdminUser()){
+    const wire=(id,fn)=>{const b=document.getElementById(id);if(b)b.onclick=()=>{fn();setTab();};};
+    wire("demoGroupsBtn",demoFillGroups);
+    wire("demoR32Btn",demoFillR32);
+    wire("demoR16Btn",()=>demoFillKo("r16"));
+    wire("demoQfBtn",()=>demoFillKo("qf"));
+    wire("demoSfBtn",()=>demoFillKo("sf"));
+    wire("demoFinalBtn",()=>demoFillKo("final"));
+  }
 
   document.querySelectorAll("[data-koh],[data-koa]").forEach(inp=>{
     inp.oninput=()=>{

@@ -2244,7 +2244,7 @@ function renderAdminGroups(){
       const r=typeof raw==="object"?raw.result||"":raw;
       const hg=typeof raw==="object"?(raw.hg!=null?raw.hg:""):"";
       const ag=typeof raw==="object"?(raw.ag!=null?raw.ag:""):"";
-      const hn=m.home.split(" ")[0]; const an=m.away.split(" ")[0];
+      const hn=m.home; const an=m.away;
       html+=`<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">
         <div style="font-size:11px;color:var(--muted);margin-bottom:5px">${m.home} vs ${m.away}</div>
         <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">

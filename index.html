@@ -264,7 +264,7 @@ input[type=password]{letter-spacing:.2em}
   margin-bottom:8px;letter-spacing:.08em;
   padding-bottom:5px;border-bottom:2px solid var(--fifa-gold);display:inline-block;
 }
-.match{display:flex;align-items:center;gap:3px;margin-bottom:5px}
+.match{display:flex;align-items:stretch;gap:4px;margin-bottom:6px}
 .t-name{font-size:10px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pbtn{
   font-size:10px;padding:3px 6px;border-radius:5px;
@@ -272,6 +272,14 @@ input[type=password]{letter-spacing:.2em}
   font-family:'DM Sans',sans-serif;font-weight:600;white-space:nowrap;color:var(--muted);
   transition:all .1s;
 }
+/* Group-pick result buttons: full team names that wrap instead of truncating */
+.pbtn-team{
+  flex:1;min-width:0;white-space:normal;word-break:break-word;line-height:1.15;
+  text-align:center;display:flex;align-items:center;justify-content:center;
+  min-height:30px;padding:4px 5px;
+}
+.pbtn-draw{flex:0 0 auto;display:flex;align-items:center;justify-content:center;min-height:30px}
+.match .chip{flex:0 0 auto;align-self:center}
 .pbtn:hover{border-color:var(--fifa-blue)}
 .pbtn.sel-W,.pbtn.ok-W{background:var(--fifa-blue);border-color:var(--fifa-blue);color:#fff}
 .pbtn.sel-D,.pbtn.ok-D{background:var(--fifa-blue-mid);border-color:var(--fifa-blue-mid);color:#fff}
@@ -1502,11 +1510,9 @@ function renderGroupPicks(draft,locked){
       const lc=p==="L"?(resVal&&locked?(resVal==="L"?"ok-L":"wrong-L"):"sel-L"):"";
       const dis=locked?"disabled":"";
       html+=`<div class="match">
-        <span class="t-name" title="${m.home}">${m.home}</span>
-        <button class="pbtn ${wc}" data-gp="${m.id}" data-v="W" ${dis}>${m.home.split(" ")[0]}</button>
-        <button class="pbtn ${dc}" data-gp="${m.id}" data-v="D" ${dis}>D</button>
-        <button class="pbtn ${lc}" data-gp="${m.id}" data-v="L" ${dis}>${m.away.split(" ")[0]}</button>
-        <span class="t-name" style="text-align:right" title="${m.away}">${m.away}</span>
+        <button class="pbtn pbtn-team ${wc}" data-gp="${m.id}" data-v="W" ${dis} title="${m.home} to win">${m.home}</button>
+        <button class="pbtn pbtn-draw ${dc}" data-gp="${m.id}" data-v="D" ${dis}>Draw</button>
+        <button class="pbtn pbtn-team ${lc}" data-gp="${m.id}" data-v="L" ${dis} title="${m.away} to win">${m.away}</button>
         ${chip}
       </div>`;
     }

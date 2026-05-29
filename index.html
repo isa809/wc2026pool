@@ -583,6 +583,17 @@ function setURLPool(code){
 
 function nk(n){return"u_"+n.toLowerCase().replace(/\s+/g,"_");}
 
+/* Firebase Realtime DB drops empty objects, so a pool with no ko/koMatches
+   results yet comes back as results:{group:{...}} (or undefined). Re-add the
+   missing sub-objects so render code can safely read ST.results.ko[...] etc. */
+function normResults(r){
+  r=r||{};
+  r.group=r.group||{};
+  r.ko=r.ko||{};
+  r.koMatches=r.koMatches||{};
+  return r;
+}
+
 /* ══ DERIVED DATA ══ */
 
 /* Predict who wins/runners-up from a user's group picks */
@@ -3086,7 +3097,7 @@ function loadPool(code, callback){
       tournament:data.tournament||"active"
     };
     ST.users     =data.users     ||{};
-    ST.results   =data.results   ||{group:{},ko:{},koMatches:{}};
+    ST.results   =normResults(data.results);
     ST.adminPin  =data.adminPin  ||"0000";
     ST.predRound =data.predRound ||1;
     ST.tournament=data.tournament||"active";
@@ -3145,7 +3156,7 @@ function listenForUpdates(){
     if(!DB_READY) return;
     const data=snapshot.val();
     if(!data) return;
-    ST.results   =data.results   ||ST.results;
+    ST.results   =normResults(data.results||ST.results);
     ST.adminPin  =data.adminPin  ||ST.adminPin;
     ST.predRound =data.predRound ||ST.predRound;
     ST.tournament=data.tournament||ST.tournament;
@@ -3223,7 +3234,7 @@ if(db){
     CURRENT_POOL_CODE=code;
     CURRENT_POOL={code,...pool};
     ST.users     = pool.users     ||{};
-    ST.results   = pool.results   ||{group:{},ko:{},koMatches:{}};
+    ST.results   = normResults(pool.results);
     ST.adminPin  = pool.adminPin  ||"0000";
     ST.predRound = pool.predRound ||1;
     ST.tournament= pool.tournament||"active";

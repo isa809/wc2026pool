@@ -2314,7 +2314,10 @@ function renderAdminGroups(){
   if(isSuperAdminUser()){
     html+=`<div class="notice-blue" style="margin-bottom:10px">
       <strong>&#127916; Demo tools (super admin)</strong> — fill fake results to test the app end to end.
-      <div style="margin-top:6px"><button class="btn btn-green" id="demoGroupsBtn" style="width:auto;padding:7px 14px;font-size:12px">&#127916; Demo: fill all group results</button></div>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-green" id="demoGroupsBtn" style="width:auto;padding:7px 14px;font-size:12px">&#127916; Demo: fill all group results</button>
+        <button class="btn-sm btn-danger" id="demoClearBtn">&#128465; Clear all results</button>
+      </div>
     </div>`;
   }
 
@@ -2590,6 +2593,7 @@ function renderAdminKnockout(){
            '<button class="btn-sm" id="demoQfBtn">Demo QF</button>'+
            '<button class="btn-sm" id="demoSfBtn">Demo SF</button>'+
            '<button class="btn-sm" id="demoFinalBtn">Demo Final</button>'+
+           '<button class="btn-sm btn-danger" id="demoClearBtn">&#128465; Clear all results</button>'+
          '</div>'+
        '</div>'
       :'')+
@@ -3011,6 +3015,10 @@ function bindTab(){
     wire("demoQfBtn",()=>demoFillKo("qf"));
     wire("demoSfBtn",()=>demoFillKo("sf"));
     wire("demoFinalBtn",()=>demoFillKo("final"));
+    const clr=document.getElementById("demoClearBtn");
+    if(clr) clr.onclick=()=>showConfirmModal("Clear all results (groups + knockout)? Players and their picks are kept.",()=>{
+      ST.results={group:{},ko:{},koMatches:{}};saveST();setTab();
+    });
   }
 
   document.querySelectorAll("[data-koh],[data-koa]").forEach(inp=>{

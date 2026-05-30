@@ -563,6 +563,9 @@ let ST=loadST();
 function saveST(){/* overridden by Firebase or localStorage implementations below */}
 
 let CU=null,VIEW="landing",TAB="picks",ADMIN_ON=false,IS_SUPER_ADMIN=false;
+/* When viewing another player's predictions from the Standings tab:
+   VIEWING = that player's user key (null = normal standings list). */
+let VIEWING=null,VIEWING_ROUND=1;
 
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
@@ -1415,7 +1418,7 @@ function renderMain(){
 function renderTab(){
   if(TAB==="picks")   return renderPicks();
   if(TAB==="results") return renderResults();
-  if(TAB==="lb")      return renderLB();
+  if(TAB==="lb")      return VIEWING?renderViewUser(VIEWING):renderLB();
   if(TAB==="scoring") return renderScoring();
   if(TAB==="admin")   return renderAdmin();
   return "";
@@ -1492,7 +1495,7 @@ function renderRoundToggle(activePr){
 }
 
 
-function renderFinalPickOnly(draft,submitted,pr){
+function renderFinalPickOnly(draft,submitted,pr,forceLocked){
   var adminFinal=(ST.results.koMatches['final']&&ST.results.koMatches['final'][0])||null;
   // Derive finalists from SF results if not manually set
   var finalA=adminFinal?adminFinal.home:(ST.results.ko['sf_0']||null);
@@ -1525,7 +1528,7 @@ function renderFinalPickOnly(draft,submitted,pr){
       if(pick===team) return "selected";
       return "";
     }
-    var dis=submitted||!!result;
+    var dis=submitted||!!result||forceLocked;
     html+="<div style=\"display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:16px\">";
 
     function teamCard(team){
@@ -2128,14 +2131,16 @@ function renderLB(){
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
   let html=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
+  html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to view their predictions</div>`;
   scores.forEach((p,i)=>{
     const isMe=p.key===CU.key;
-    html+=`<div class="lb-row" style="${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
+    html+=`<div class="lb-row" data-view-user="${p.key}" title="View ${p.name}'s predictions" style="cursor:pointer;${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
       <span class="lb-rank${i<3?" top":""}">${i+1}</span>
       <div class="av" style="${isMe?"background:var(--navy);color:#fff":""}">${p.name.charAt(0).toUpperCase()}</div>
       <span style="flex:1;font-size:14px;font-weight:${isMe?600:400}">${p.name}${isMe?" (you)":""}${p.submitted?`<span class="submitted-badge">R${pr} ✓</span>`:""}</span>
       <span class="lb-pts">${p.score}</span>
       <span style="font-size:11px;color:var(--muted);margin-left:2px">pts</span>
+      <span style="font-size:16px;color:var(--muted);margin-left:6px">&#8250;</span>
     </div>`;
   });
   if(scores.length>1){
@@ -2143,6 +2148,69 @@ function renderLB(){
     html+=`<div class="last-notice">🏃 ${last.name} — ${ST.tournament==="done"?"time to sign up for that 5k!":"currently last!"}</div>`;
   }
   return html+`</div>`;
+}
+
+/* View another player's predictions (read-only) from the Standings tab.
+   - Submitted+locked rounds are visible to everyone.
+   - Unsubmitted rounds: normal users see only a note; the super admin sees
+     the in-progress draft with a "Predictions in progress" note. */
+function renderViewUser(userKey){
+  const u=ST.users[userKey];
+  const isSuper=isSuperAdminUser();
+  if(!u){
+    return '<div class="card"><button class="btn-sm" id="viewUserBack">&#8592; Back to standings</button>'+
+      '<p style="padding:14px 0;color:var(--muted)">Player not found.</p></div>';
+  }
+  const maxRound=ST.predRound;
+  let vr=VIEWING_ROUND; if(vr>maxRound)vr=maxRound; if(vr<1)vr=1;
+  const isMe=userKey===CU.key;
+  const score=calcScore(userKey);
+
+  let html='<div class="card">'+
+    '<button class="btn-sm" id="viewUserBack" style="margin-bottom:12px">&#8592; Back to standings</button>'+
+    '<div style="display:flex;align-items:center;gap:10px">'+
+      '<div class="av">'+u.displayName.charAt(0).toUpperCase()+'</div>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-weight:600;font-size:16px">'+u.displayName+(isMe?' (you)':'')+'</div>'+
+        '<div style="font-size:12px;color:var(--muted)">'+score+' pts'+(isSuper?' &middot; super-admin view':'')+'</div>'+
+      '</div>'+
+    '</div></div>';
+
+  // Round selector (only rounds that have opened)
+  html+='<div class="round-toggle">';
+  for(let r=1;r<=maxRound;r++){
+    const sub=getUserRound(userKey,r).submitted;
+    const label=r===3?'Final Pick':'Round '+r;
+    const status=sub?'&#9989;':'&#9998;';
+    html+='<button class="round-tab'+(r===vr?' round-tab-active':'')+'" data-vu-round="'+r+'">'+status+' '+label+'</button>';
+  }
+  html+='</div>';
+
+  const rd=getUserRound(userKey,vr);
+  const sub=rd.submitted;
+  const draft=rd.picks||{group:{},ko:{}};
+
+  if(!sub && !isSuper){
+    html+='<div class="notice-blue"><strong>Round '+vr+' not yet submitted.</strong> '+
+      'You can view a player’s predictions for a round only after they submit and lock it.</div>';
+    return html;
+  }
+  if(!sub){ // super admin viewing in-progress
+    html+='<div class="notice"><strong>&#9998; Predictions in progress</strong> — Round '+vr+
+      ' has not been submitted yet. Showing the current (unlocked) draft.</div>';
+  } else {
+    html+='<div class="notice-green"><strong>&#9989; Round '+vr+' submitted &amp; locked.</strong></div>';
+  }
+
+  // Always render read-only (forceLocked) so nothing can be edited here.
+  if(vr===3){
+    html+=renderFinalPickOnly(draft,sub,vr,true);
+  } else if(vr===1){
+    html+=renderGroupPicks(draft,true)+renderBracket(draft,true,vr);
+  } else {
+    html+=renderBracket(draft,true,vr);
+  }
+  return html;
 }
 
 /* ══ SCORING ══ */
@@ -2722,7 +2790,7 @@ function bindMain(){
   const saBackBtn=document.getElementById("saBackBtn");
   if(saBackBtn) saBackBtn.onclick=()=>{CU=null;ADMIN_ON=false;CURRENT_POOL=null;CURRENT_POOL_CODE=null;setURLPool(null);VIEW="super";render();};
   document.getElementById("logoutBtn").onclick=()=>{CU=null;VIEW="join";ADMIN_ON=false;render();};
-  document.querySelectorAll(".tab[data-tab]").forEach(t=>{t.onclick=()=>{TAB=t.dataset.tab;setTab();};});
+  document.querySelectorAll(".tab[data-tab]").forEach(t=>{t.onclick=()=>{TAB=t.dataset.tab;VIEWING=null;setTab();};});
   bindTab();
   updateMissCount();
 }
@@ -2853,6 +2921,7 @@ function bindTab(){
   /* group picks */
   document.querySelectorAll("[data-gp]").forEach(btn=>{
     btn.onclick=()=>{
+      if(VIEWING) return;
       if(submitted||pr!==1) return;
       const d=getDraft();
       if(!d.group)d.group={};
@@ -2867,6 +2936,7 @@ function bindTab(){
   document.querySelectorAll("[data-ko]").forEach(el=>{
     if(el.classList.contains("disabled")) return;
     el.onclick=(e)=>{
+      if(VIEWING) return;
       // Don't fire if user clicked the t3 dropdown itself
       if(e.target&&(e.target.tagName==="SELECT"||e.target.tagName==="OPTION")) return;
       if(submitted) return;
@@ -2886,6 +2956,7 @@ function bindTab(){
   /* T3 team selector dropdowns */
   document.querySelectorAll(".t3-sel").forEach(sel=>{
     sel.onchange=()=>{
+      if(VIEWING) return;
       if(submitted) return;
       const t3key=sel.dataset.t3key; // e.g. "r32_2_t3"
       const d=getDraft();
@@ -2936,6 +3007,16 @@ function bindTab(){
       const curBtn=document.querySelector(".round-tab[data-viewround='"+ST.predRound+"']");
       if(curBtn) curBtn.onclick=()=>setTab();
     };
+  });
+
+  /* standings → view a player's predictions */
+  document.querySelectorAll("[data-view-user]").forEach(row=>{
+    row.onclick=()=>{ VIEWING=row.dataset.viewUser; VIEWING_ROUND=ST.predRound; setTab(); };
+  });
+  const vuBack=document.getElementById("viewUserBack");
+  if(vuBack) vuBack.onclick=()=>{ VIEWING=null; setTab(); };
+  document.querySelectorAll("[data-vu-round]").forEach(btn=>{
+    btn.onclick=()=>{ VIEWING_ROUND=parseInt(btn.dataset.vuRound); setTab(); };
   });
 
   /* admin unlock */

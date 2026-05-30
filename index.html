@@ -782,6 +782,9 @@ function demoFillKo(round){
 /* Is the current user the super admin (the only one allowed to use demo tools)? */
 function isSuperAdminUser(){return !!(CU&&CU.isSuperAdmin)||IS_SUPER_ADMIN;}
 
+/* Is a stored user the (virtual) super-admin account? Excluded from standings/players. */
+function isSuperAdminEntry(key,u){return key==="u_superadmin"||!!(u&&u.isSuperAdmin);}
+
 /* Get merged picks across all submitted rounds */
 function getMergedPicks(userKey){
   const u=ST.users[userKey];
@@ -2124,10 +2127,12 @@ function renderResults(){
 
 function renderLB(){
   const pr=ST.predRound;
-  const scores=Object.entries(ST.users).map(([k,u])=>({
-    key:k,name:u.displayName,score:calcScore(k),
-    submitted:getUserRound(k,pr).submitted
-  })).sort((a,b)=>b.score-a.score);
+  const scores=Object.entries(ST.users)
+    .filter(([k,u])=>!isSuperAdminEntry(k,u))
+    .map(([k,u])=>({
+      key:k,name:u.displayName,score:calcScore(k),
+      submitted:getUserRound(k,pr).submitted
+    })).sort((a,b)=>b.score-a.score);
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
   let html=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
@@ -2739,7 +2744,7 @@ function renderAdminKnockout(){
 }
 
 function renderAdminPlayers(){
-  const users=Object.entries(ST.users);
+  const users=Object.entries(ST.users).filter(([k,u])=>!isSuperAdminEntry(k,u));
   let html=`<div class="card">
     <div class="card-title">Player management</div>
     <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.</div>`;

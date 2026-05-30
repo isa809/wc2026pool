@@ -655,20 +655,42 @@ function actualStandings(){
   return res;
 }
 
-/* Auto-generate R32 matchups from actual standings for non-T3 slots */
+/* Build the 16 ACTUAL R32 matchups from admin-entered group results.
+   - Non-T3 slots: the group winner / runner-up straight from the standings.
+   - The 8 best-3rd (T3) slots: assigned a 3rd-place team from that slot's
+     candidate groups, deterministically and without duplication, so every
+     user sees the exact same bracket.
+   Returns [{home,away}, ...] with empty strings where a team can't be
+   determined yet (e.g. a group's results aren't all entered). */
+function buildActualR32Matchups(){
+  const st=actualStandings();
+  const usedThirds={};
+  const out=[];
+  R32_SEEDS.forEach(function(seed,i){
+    function teamFor(side){
+      if(side.t==='T3'){
+        const slot=T3_SLOTS[i];
+        if(slot){
+          for(const g of slot.groups){const t=st[g]&&st[g].third;if(t&&!usedThirds[t]){usedThirds[t]=true;return t;}}
+          for(const g of slot.groups){const t=st[g]&&st[g].third;if(t)return t;}
+        }
+        return '';
+      }
+      return slotTeam(side,st)||'';
+    }
+    out[i]={home:teamFor(seed.a),away:teamFor(seed.b)};
+  });
+  return out;
+}
+
+/* Auto-generate ALL 16 R32 matchups (incl. best-3rd slots) from actual results */
 function autoFillR32Matchups(){
-  const standings=actualStandings();
+  const matchups=buildActualR32Matchups();
   if(!ST.results.koMatches.r32) ST.results.koMatches.r32=[];
   let filled=0;
-  R32_SEEDS.forEach(function(seed,i){
-    // Only auto-fill slots where BOTH sides are W or R (not T3)
-    if(seed.a.t==='T3'||seed.b.t==='T3') return;
-    const ta=slotTeam(seed.a,standings);
-    const tb=slotTeam(seed.b,standings);
-    if(ta&&tb){
-      if(!ST.results.koMatches.r32[i]) ST.results.koMatches.r32[i]={home:'',away:''};
-      ST.results.koMatches.r32[i].home=ta;
-      ST.results.koMatches.r32[i].away=tb;
+  matchups.forEach(function(m,i){
+    if(m&&m.home&&m.away){
+      ST.results.koMatches.r32[i]={home:m.home,away:m.away};
       filled++;
     }
   });
@@ -734,27 +756,7 @@ function demoFillGroups(){
 function demoFillR32(){
   // Need full group standings first; auto-fill them if they're not complete.
   if(Object.keys(actualStandings()).length<Object.keys(GROUPS).length) demoFillGroups();
-  const st=actualStandings();
-  const usedThirds={};
-  const matchups=[];
-  R32_SEEDS.forEach(function(seed,i){
-    function teamFor(side){
-      if(side.t==="T3"){
-        const slot=T3_SLOTS[i];
-        if(slot){
-          // First unused 3rd-place team from this slot's candidate groups.
-          for(const g of slot.groups){
-            const third=st[g]&&st[g].third;
-            if(third&&!usedThirds[third]){usedThirds[third]=true;return third;}
-          }
-          for(const g of slot.groups){const third=st[g]&&st[g].third;if(third)return third;}
-        }
-        return "";
-      }
-      return slotTeam(side,st)||"";
-    }
-    matchups[i]={home:teamFor(seed.a),away:teamFor(seed.b)};
-  });
+  const matchups=buildActualR32Matchups();
   ST.results.koMatches.r32=matchups;
   for(let i=0;i<16;i++){
     if(matchups[i].home) ST.results.ko["r32_"+i]=matchups[i].home;  // home wins
@@ -894,12 +896,20 @@ function countMissing(){
       if(!draft.ko||!draft.ko['final_0']) miss++;
     }
   } else {
-    const open=PR_OPEN[pr]||[];
-    for(const round of KO_ROUNDS){
-      if(!open.includes(round.id)) continue;
-      const matches=(ST.results.koMatches[round.id]||[]).filter(m=>m&&m.home&&m.away);
-      matches.forEach((_,i)=>{if(!draft.ko||!draft.ko[round.id+'_'+i]) miss++;});
+    // Round 2: full bracket. R32 is seeded from the actual group results;
+    // R16/QF/SF/Final cascade from the user's own picks (same as Round 1).
+    const actualR32=buildActualR32Matchups();
+    for(let i=0;i<16;i++){
+      if(actualR32[i].home&&actualR32[i].away&&(!draft.ko||!draft.ko['r32_'+i])) miss++;
     }
+    const r16Pairs=getR16Pairs(draft);
+    r16Pairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['r16_'+i])) miss++;});
+    const qfPairs=getQFPairs(draft);
+    qfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['qf_'+i])) miss++;});
+    const sfPairs=getSFPairs(draft);
+    sfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['sf_'+i])) miss++;});
+    const fp=getFinalPair(draft);
+    if(fp.a&&fp.b&&(!draft.ko||!draft.ko["final_0"])) miss++;
   }
   return miss;
 }
@@ -1734,6 +1744,9 @@ function renderBracket(draft,locked,pr){
 
   // R32
   const r32Open=open.includes('r32')&&!locked;
+  // For R2+, the actual R32 matchups (incl. best-3rd slots) derived from the
+  // admin's group results — shared by all users and overriding R1 predictions.
+  const actualR32=isR1?null:buildActualR32Matchups();
   let r32html='';
   for(let i=0;i<16;i++){
     let ta=null,tb=null,pendingLabelA=null,pendingLabelB=null;
@@ -1743,17 +1756,10 @@ function renderBracket(draft,locked,pr){
       ta=m.home;tb=m.away;pendingLabelA=m.labelA;pendingLabelB=m.labelB;
       t3CandA=m.t3CandidatesA;t3CandB=m.t3CandidatesB;isT3A=m.isT3MatchA;isT3B=m.isT3MatchB;
     } else {
-      const m=getAdminMatch('r32',i);
-      if(m){ta=m.home;tb=m.away;}
-      else if(ST.predRound>=2){
-        // Auto-derive from actual group standings for non-T3 slots
-        const seed=R32_SEEDS[i];
-        if(seed&&seed.a.t!=='T3'&&seed.b.t!=='T3'){
-          const actStandings=actualStandings();
-          ta=slotTeam(seed.a,actStandings)||null;
-          tb=slotTeam(seed.b,actStandings)||null;
-        }
-      }
+      // Admin-set matchup wins; otherwise fall back to the derived actual matchup
+      // (covers both W/R slots and the 8 best-3rd slots).
+      const m=getAdminMatch('r32',i)||actualR32[i]||null;
+      if(m&&m.home&&m.away){ta=m.home;tb=m.away;}
     }
     const pickObj=(draft.ko&&draft.ko['r32_'+i])||null;
     const pick=pickObj?(typeof pickObj==='object'?pickObj.team:pickObj):null;

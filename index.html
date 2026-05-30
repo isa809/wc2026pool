@@ -2176,13 +2176,16 @@ function renderViewUser(userKey){
       '</div>'+
     '</div></div>';
 
-  // Round selector (only rounds that have opened)
+  // Round selector — always show all three; grey out rounds that haven't opened yet.
   html+='<div class="round-toggle">';
-  for(let r=1;r<=maxRound;r++){
+  for(let r=1;r<=3;r++){
+    const open=r<=maxRound;
     const sub=getUserRound(userKey,r).submitted;
     const label=r===3?'Final Pick':'Round '+r;
-    const status=sub?'&#9989;':'&#9998;';
-    html+='<button class="round-tab'+(r===vr?' round-tab-active':'')+'" data-vu-round="'+r+'">'+status+' '+label+'</button>';
+    const status=!open?'&#128274;':(sub?'&#9989;':'&#9998;');  // 🔒 locked / ✅ submitted / ✎ in progress
+    html+='<button class="round-tab'+(r===vr?' round-tab-active':'')+'" data-vu-round="'+r+'"'+
+      (open?'':' disabled title="Round '+r+' hasn\'t opened yet" style="opacity:.45;cursor:not-allowed"')+'>'+
+      status+' '+label+'</button>';
   }
   html+='</div>';
 

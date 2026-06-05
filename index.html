@@ -3169,7 +3169,7 @@ function bindTab(){
   const advArea=document.getElementById("advRoundArea");
   if(advArea){
     const pr2=ST.predRound;
-    const rName=r=>r===3?'Final Pick':'Round '+r;
+    const rName=r=>r===3?'Round 3 (Final Pick)':'Round '+r;
     let inner='';
     if(pr2<3){
       inner+='<button class="btn btn-green" id="advBtn" style="margin-bottom:8px">'+
@@ -3177,9 +3177,13 @@ function bindTab(){
     } else {
       inner+='<div class="notice-blue" style="margin-bottom:8px">Round 3 is the final prediction round.</div>';
     }
+    // Unlock the CURRENT round in place — lets everyone resubmit without rolling
+    // the pool back. This is the one to use when players need to redo the open round.
+    inner+='<button class="btn btn-outline" id="unlockCurBtn" style="margin-bottom:0">&#128275; Unlock '+rName(pr2)+' for all players</button>'+
+      '<p style="font-size:11px;color:var(--muted);margin:6px 0 '+(pr2>1?'10px':'0')+'">Reopens the current round so everyone can edit and resubmit it. The round stays open.</p>';
     if(pr2>1){
-      inner+='<button class="btn btn-outline" id="reopenBtn" style="margin-bottom:0">&#128275; Reopen '+rName(pr2-1)+' for all players</button>'+
-        '<p style="font-size:11px;color:var(--muted);margin:6px 0 0">Rolls the pool back one round and unlocks it so everyone can edit and resubmit.</p>';
+      inner+='<button class="btn btn-outline" id="reopenBtn" style="margin-bottom:0">&#9665; Roll back to '+rName(pr2-1)+'</button>'+
+        '<p style="font-size:11px;color:var(--muted);margin:6px 0 0">Closes the current round and reopens the previous one (unlocked) for all players.</p>';
     }
     advArea.innerHTML=inner;
     const advBtn=document.getElementById("advBtn");
@@ -3192,10 +3196,19 @@ function bindTab(){
         saveST();setTab();
       });
     };
+    const unlockCurBtn=document.getElementById("unlockCurBtn");
+    if(unlockCurBtn) unlockCurBtn.onclick=()=>{
+      const t=ST.predRound;
+      showConfirmModal("Unlock "+rName(t)+" for ALL players? Everyone's "+rName(t)+
+        " submission will be reopened so they can change and resubmit it. The round stays open.",function(){
+        unlockRoundForAll(t);
+        setTab();
+      });
+    };
     const reopenBtn=document.getElementById("reopenBtn");
     if(reopenBtn) reopenBtn.onclick=()=>{
       const target=ST.predRound-1;
-      const msg="Reopen "+rName(target)+" for ALL players? The current round ("+rName(ST.predRound)+
+      const msg="Roll the pool back to "+rName(target)+" for ALL players? The current round ("+rName(ST.predRound)+
         ") will close and every player's "+rName(target)+" submission will be unlocked so they can change and resubmit it.";
       showConfirmModal(msg,function(){
         reopenRoundForAll(target);
@@ -3215,7 +3228,14 @@ function bindTab(){
         });
       };
     } else {
-      tsArea.innerHTML='<div class="notice-green">Tournament complete — standings are final.</div>';
+      tsArea.innerHTML='<div class="notice-green" style="margin-bottom:8px">Tournament complete — standings are final.</div>'+
+        '<button class="btn btn-outline" id="reopenTournBtn">&#8617; Reopen tournament (undo complete)</button>';
+      const reopenTournBtn=document.getElementById("reopenTournBtn");
+      if(reopenTournBtn) reopenTournBtn.onclick=()=>{
+        showConfirmModal("Reopen the tournament? Standings will no longer be marked final and you can keep entering results.",function(){
+          ST.tournament="active";saveST();setTab();
+        });
+      };
     }
   }
 
@@ -3522,16 +3542,22 @@ function removeUserNode(key){
   db.ref("pools/"+CURRENT_POOL_CODE+"/users/"+key).remove().catch(err=>console.error("Firebase remove error:",err));
 }
 
-/* Admin: roll the whole pool back to an earlier prediction round and unlock that
-   round for every player so they can edit and resubmit. */
-function reopenRoundForAll(targetRound){
+/* Admin: unlock a prediction round for every player so they can edit and
+   resubmit it. Does NOT change which round is current. */
+function unlockRoundForAll(targetRound){
   Object.keys(ST.users).forEach(k=>{
     const u=ST.users[k];
     if(u&&u.rounds&&u.rounds[targetRound]) u.rounds[targetRound].submitted=false;
   });
+  saveAllUsersAndShared();
+}
+
+/* Admin: roll the whole pool back to an earlier prediction round and unlock that
+   round for every player so they can edit and resubmit. */
+function reopenRoundForAll(targetRound){
   ST.predRound=targetRound;
   if(CURRENT_POOL) CURRENT_POOL.predRound=targetRound;
-  saveAllUsersAndShared();
+  unlockRoundForAll(targetRound);
 }
 
 /* Persist predRound + every user node at once. Used only for deliberate admin
@@ -3561,6 +3587,7 @@ function listenForUpdates(){
     const data=snapshot.val();
     if(!data) return;
     const prevPredRound=ST.predRound;
+    const prevTournament=ST.tournament;
     ST.results   =normResults(data.results||ST.results);
     ST.adminPin  =data.adminPin  ||ST.adminPin;
     ST.predRound =data.predRound ||ST.predRound;
@@ -3592,7 +3619,7 @@ function listenForUpdates(){
     });
     // Re-render on round changes (either direction) and admin unlocks so players
     // see a reopened round live, plus the usual standings/results refresh.
-    if(TAB==="lb"||TAB==="results"||ownUnlocked||prevPredRound!==ST.predRound) setTab();
+    if(TAB==="lb"||TAB==="results"||ownUnlocked||prevPredRound!==ST.predRound||prevTournament!==ST.tournament) setTab();
     const scoreEl=document.getElementById("scoreDisplay");
     if(scoreEl&&CU) scoreEl.textContent=calcScore(CU.key)+" pts";
   });

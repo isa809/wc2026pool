@@ -812,6 +812,21 @@ function getMergedPicks(userKey){
   return merged;
 }
 
+/* Per-key scoring metadata for the knockout bracket: for each ko slot, the team
+   that actually counts (merged across rounds) and the round it was FIRST locked.
+   Used so the bracket's earned-points labels (base + early-pick bonus) match the
+   real scoring shown in the points-breakdown card. */
+function koScoreMeta(userKey){
+  const ko=getMergedPicks(userKey).ko||{};
+  const o={};
+  for(const k in ko){
+    if(k.endsWith("_t3")) continue;
+    const v=ko[k];
+    o[k]={team:(v&&typeof v==="object")?v.team:v,round:(v&&v.round)||1};
+  }
+  return o;
+}
+
 function calcScore(userKey){
   const picks=getMergedPicks(userKey);
   let pts=0;
@@ -1529,14 +1544,14 @@ function renderPicks(){
           '</div>'+
         '</div>'+
       '</div>';
-    if(pr===1) html+=renderGroupPicks(draft,true)+renderBracket(draft,true,pr);
-    else html+=renderBracket(draft,true,pr);
+    if(pr===1) html+=renderGroupPicks(draft,true)+renderBracket(draft,true,pr,koScoreMeta(CU.key));
+    else html+=renderBracket(draft,true,pr,koScoreMeta(CU.key));
   } else {
     // Active — show picks with submit button
     const subText=pr===1?'Pick groups + full bracket — locked once you submit.':'Group stage locked — revise your full bracket then submit.';
     html+='<div class="pr-bar"><div><div class="pr-title">Prediction Round '+pr+' of 3</div><div class="pr-sub">'+subText+'</div></div><div id="missCount"></div></div>';
-    if(pr===1) html+=renderGroupPicks(draft,false)+renderBracket(draft,false,pr);
-    else html+=renderBracket(draft,false,pr);
+    if(pr===1) html+=renderGroupPicks(draft,false)+renderBracket(draft,false,pr,koScoreMeta(CU.key));
+    else html+=renderBracket(draft,false,pr,koScoreMeta(CU.key));
     html+='<div id="submitArea"></div>';
   }
   return html;
@@ -1672,7 +1687,8 @@ function renderGroupPicks(draft,locked){
 }
 
 /* ══ BRACKET ══ */
-function renderBracket(draft,locked,pr){
+function renderBracket(draft,locked,pr,meta){
+  meta=meta||{};
   const open=PR_OPEN[pr]||[];
   const isR1=(pr===1);
   const standings=isR1?predictedStandings(draft.group||{}):null;
@@ -1783,7 +1799,10 @@ function renderBracket(draft,locked,pr){
     }
     // Points actually earned (base + bonus) shown once a result is in.
     const pkoStd=draft.ko&&draft.ko[key];
-    const pickRoundStd=pkoStd&&typeof pkoStd==='object'?(pkoStd.round||1):1;
+    let pickRoundStd=pkoStd&&typeof pkoStd==='object'?(pkoStd.round||1):1;
+    // Prefer the round this team was FIRST locked (merged scoring) so the bonus
+    // shown matches what the player actually earned in the points breakdown.
+    if(meta[key]&&meta[key].team===pickTeam) pickRoundStd=meta[key].round;
     function earnedLabel(team){
       if(!result||!team||!sc) return '';
       const eb=sc.bonus[pickRoundStd-1]||0;const mx=sc.base+eb;
@@ -1923,7 +1942,8 @@ function renderBracket(draft,locked,pr){
   const dispFa=ta||'<em style="color:var(--muted);font-size:10px">TBD</em>';
   const dispFb=tb||'<em style="color:var(--muted);font-size:10px">TBD</em>';
   // Earned points for the final once a result is in.
-  const fpickRound=fpickObj&&typeof fpickObj==='object'?(fpickObj.round||1):1;
+  let fpickRound=fpickObj&&typeof fpickObj==='object'?(fpickObj.round||1):1;
+  if(meta['final_0']&&meta['final_0'].team===fpick) fpickRound=meta['final_0'].round;
   function fEarned(team){
     if(!fres||!team) return '';
     const eb=SC.ko.final.bonus[fpickRound-1]||0;const mx=SC.ko.final.base+eb;
@@ -2315,9 +2335,9 @@ function renderViewUser(userKey){
   if(vr===3){
     html+=renderFinalPickOnly(draft,sub,vr,true);
   } else if(vr===1){
-    html+=renderGroupPicks(draft,true)+renderBracket(draft,true,vr);
+    html+=renderGroupPicks(draft,true)+renderBracket(draft,true,vr,koScoreMeta(userKey));
   } else {
-    html+=renderBracket(draft,true,vr);
+    html+=renderBracket(draft,true,vr,koScoreMeta(userKey));
   }
   return html;
 }
@@ -3099,9 +3119,9 @@ function bindTab(){
       if(r===3){
         html+=renderFinalPickOnly(pastDraft,pastSub,r);
       } else if(r===1){
-        html+=renderGroupPicks(pastDraft,true)+renderBracket(pastDraft,true,r);
+        html+=renderGroupPicks(pastDraft,true)+renderBracket(pastDraft,true,r,koScoreMeta(CU.key));
       } else {
-        html+=renderBracket(pastDraft,true,r);
+        html+=renderBracket(pastDraft,true,r,koScoreMeta(CU.key));
       }
       tc.innerHTML=html;
       // Re-bind the toggle buttons only

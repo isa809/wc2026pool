@@ -1245,8 +1245,8 @@ function bindJoin(){
     const key=nk(name);
     if(ST.users[key]){err.textContent="Name already taken in this pool.";return;}
     ST.users[key]={displayName:name,pin,rounds:{},history:[]};
-    saveST();
     CU={key,displayName:name,pin};
+    saveST();
     VIEW="main";TAB="picks";listenForUpdates();render();
   };
 }
@@ -1593,7 +1593,7 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
 
   if(submitted){
     html+="<div class=\"notice-green\"><strong>Round 3 submitted!</strong> Your champion pick is locked. Good luck!</div>";
-  } else {
+  } else if(!forceLocked){
     html+="<div class=\"pr-bar\"><div><div class=\"pr-title\">Prediction Round 3 of 3 &#8212; The Final</div>";
     html+="<div class=\"pr-sub\">Pick your World Cup champion from the two finalists.</div></div></div>";
   }
@@ -1638,7 +1638,7 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
     html+="</div>";
   }
 
-  if(!submitted&&finalA&&finalB){
+  if(!submitted&&finalA&&finalB&&!forceLocked){
     if(!pick){
       html+="<div class=\"notice-red\" style=\"margin-bottom:8px\">Pick your champion to submit.</div>";
       html+="<button class=\"btn-submit\" disabled>Submit Final Pick</button>";
@@ -3325,7 +3325,7 @@ function bindTab(){
       }
       if(!ST.users[key]){return;}
       ST.users[key].pin=newPin;
-      saveST();
+      saveUserNode(key);
       inp.value="";
       const msg=document.getElementById("playerMsg");
       if(msg){msg.className="ok";msg.textContent=ST.users[key].displayName+"'s PIN updated to "+newPin;}
@@ -3339,7 +3339,7 @@ function bindTab(){
       const name=ST.users[key]?ST.users[key].displayName:key;
       showConfirmModal("Remove "+name+"?",function(){
         delete ST.users[key];
-        saveST();
+        removeUserNode(key);
         setTab();
       });
     };
@@ -3439,18 +3439,40 @@ function createPool(code,name,adminPin,joinPassword,adminName,adminPinUser,callb
 
 function saveST(){
   if(!DB_READY||!CURRENT_POOL_CODE||!db) return;
-  db.ref("pools/"+CURRENT_POOL_CODE).set({
-    name:        CURRENT_POOL?CURRENT_POOL.name:"",
-    adminPin:    ST.adminPin,
-    joinPassword:CURRENT_POOL?CURRENT_POOL.joinPassword:"",
-    adminKey:    CURRENT_POOL?CURRENT_POOL.adminKey:"",
-    createdAt:   CURRENT_POOL?CURRENT_POOL.createdAt||Date.now():Date.now(),
-    users:       ST.users,
-    results:     ST.results,
-    predRound:   ST.predRound,
-    tournament:  ST.tournament,
-    _adminTab:   ST._adminTab||"rounds"
-  }).catch(err=>console.error("Firebase save error:",err));
+  const base="pools/"+CURRENT_POOL_CODE;
+  // Granular write: shared pool fields + ONLY the current user's own node.
+  // We never write the whole users tree, so a stale device (e.g. the admin busy
+  // entering results) can't overwrite another player's freshly-submitted round.
+  // Each player saves their own node; everyone else stays current via the
+  // realtime listener.
+  const updates={
+    [base+"/adminPin"]:   ST.adminPin,
+    [base+"/results"]:    ST.results,
+    [base+"/predRound"]:  ST.predRound,
+    [base+"/tournament"]: ST.tournament,
+    [base+"/_adminTab"]:  ST._adminTab||"rounds"
+  };
+  if(CURRENT_POOL){
+    updates[base+"/name"]=CURRENT_POOL.name||"";
+    updates[base+"/joinPassword"]=CURRENT_POOL.joinPassword||"";
+    updates[base+"/adminKey"]=CURRENT_POOL.adminKey||"";
+    if(CURRENT_POOL.createdAt) updates[base+"/createdAt"]=CURRENT_POOL.createdAt;
+  }
+  if(CU&&CU.key&&ST.users[CU.key]) updates[base+"/users/"+CU.key]=ST.users[CU.key];
+  db.ref().update(updates).catch(err=>console.error("Firebase save error:",err));
+}
+
+/* Persist a single user's node (used by admin actions on OTHER players, e.g.
+   PIN resets) without touching the rest of the users tree. */
+function saveUserNode(key){
+  if(!DB_READY||!CURRENT_POOL_CODE||!db){ saveST(); return; }
+  if(ST.users[key]) db.ref("pools/"+CURRENT_POOL_CODE+"/users/"+key).set(ST.users[key]).catch(err=>console.error("Firebase save error:",err));
+}
+
+/* Remove a single user's node from the pool (admin "Remove player"). */
+function removeUserNode(key){
+  if(!DB_READY||!CURRENT_POOL_CODE||!db){ saveST(); return; }
+  db.ref("pools/"+CURRENT_POOL_CODE+"/users/"+key).remove().catch(err=>console.error("Firebase remove error:",err));
 }
 
 function loadAllPools(callback){
@@ -3480,6 +3502,13 @@ function listenForUpdates(){
     const remoteUsers=data.users||{};
     Object.keys(remoteUsers).forEach(k=>{
       if(!CU||k!==CU.key) ST.users[k]=remoteUsers[k];
+    });
+    // Drop locally-cached players that were removed remotely (keep yourself and
+    // the virtual super-admin account, which isn't persisted as a real player).
+    Object.keys(ST.users).forEach(k=>{
+      if(CU&&k===CU.key) return;
+      if(isSuperAdminEntry(k,ST.users[k])) return;
+      if(!(k in remoteUsers)) delete ST.users[k];
     });
     if(TAB==="lb"||TAB==="results") setTab();
     const scoreEl=document.getElementById("scoreDisplay");

@@ -1781,16 +1781,30 @@ function renderBracket(draft,locked,pr){
       if(pickTeam===team) return 'selected';
       return '';
     }
+    // Points actually earned (base + bonus) shown once a result is in.
+    const pkoStd=draft.ko&&draft.ko[key];
+    const pickRoundStd=pkoStd&&typeof pkoStd==='object'?(pkoStd.round||1):1;
+    function earnedLabel(team){
+      if(!result||!team||!sc) return '';
+      const eb=sc.bonus[pickRoundStd-1]||0;const mx=sc.base+eb;
+      if(pickTeam===team&&result===team)
+        return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+sc.base+' base'+(eb>0?' +'+eb+' R'+pickRoundStd+' bonus':'')+'</span>';
+      if(pickTeam===team)
+        return '<span style="font-size:9px;color:var(--red);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>0 pts</b><br>missed '+mx+'</span>';
+      return '';
+    }
     const dispA=teamA||('<em style="color:var(--muted);font-size:10px">'+(lblA||'TBD')+'</em>');
     const dispB=teamB||('<em style="color:var(--muted);font-size:10px">'+(lblB||'TBD')+'</em>');
     const ptsA=pickTeam===teamA&&teamA&&bonusTxt?'<span class="slot-pts">'+bonusTxt+'</span>':'';
     const ptsB=pickTeam===teamB&&teamB&&bonusTxt?'<span class="slot-pts">'+bonusTxt+'</span>':'';
+    const extraA=result?earnedLabel(teamA):ptsA;
+    const extraB=result?earnedLabel(teamB):ptsB;
     return '<div class="brd-match'+(isLocked?' locked':'')+'">'+
       '<div class="brd-slot '+slotCls(teamA)+(!pending&&!isLocked&&isOpen&&!result?' hoverable':'')+' '+(dis2?'disabled':'')+'" data-ko="'+key+'" data-team="'+(teamA||'')+'">'+
-        '<span class="slot-name" title="'+(teamA||'')+'">'+dispA+'</span>'+ptsA+
+        '<span class="slot-name" title="'+(teamA||'')+'">'+dispA+'</span>'+extraA+
       '</div>'+
       '<div class="brd-slot '+slotCls(teamB)+(!pending&&!isLocked&&isOpen&&!result?' hoverable':'')+' '+(dis2?'disabled':'')+'" data-ko="'+key+'" data-team="'+(teamB||'')+'">'+
-        '<span class="slot-name" title="'+(teamB||'')+'">'+dispB+'</span>'+ptsB+
+        '<span class="slot-name" title="'+(teamB||'')+'">'+dispB+'</span>'+extraB+
       '</div>'+
     '</div>';
   }
@@ -1908,6 +1922,17 @@ function renderBracket(draft,locked,pr){
   const fdis=(!finalOpen||!ta||!tb||fres)?'disabled':'';
   const dispFa=ta||'<em style="color:var(--muted);font-size:10px">TBD</em>';
   const dispFb=tb||'<em style="color:var(--muted);font-size:10px">TBD</em>';
+  // Earned points for the final once a result is in.
+  const fpickRound=fpickObj&&typeof fpickObj==='object'?(fpickObj.round||1):1;
+  function fEarned(team){
+    if(!fres||!team) return '';
+    const eb=SC.ko.final.bonus[fpickRound-1]||0;const mx=SC.ko.final.base+eb;
+    if(fpick===team&&fres===team)
+      return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+SC.ko.final.base+' base'+(eb>0?' +'+eb+' R'+fpickRound+' bonus':'')+'</span>';
+    if(fpick===team)
+      return '<span style="font-size:9px;color:var(--red);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>0 pts</b><br>missed '+mx+'</span>';
+    return '';
+  }
   html+='<div class="brd-col">'+
     '<div class="brd-col-title">The Final<span class="pts">+'+SC.ko.final.base+' pts &middot; '+fBonusTxt+'</span></div>'+
     '<div class="brd-final">'+
@@ -1915,10 +1940,10 @@ function renderBracket(draft,locked,pr){
       '<div class="final-title">Champion</div>'+
       '<div class="final-box">'+
         '<div class="final-slot '+finalSlotCls(ta)+' '+(fdis?'disabled':'')+'" data-ko="final_0" data-team="'+(ta||'')+'">'+
-          '<span class="slot-name" title="'+(ta||'')+'">'+dispFa+'</span>'+
+          '<span class="slot-name" title="'+(ta||'')+'">'+dispFa+'</span>'+fEarned(ta)+
         '</div>'+
         '<div class="final-slot '+finalSlotCls(tb)+' '+(fdis?'disabled':'')+'" data-ko="final_0" data-team="'+(tb||'')+'">'+
-          '<span class="slot-name" title="'+(tb||'')+'">'+dispFb+'</span>'+
+          '<span class="slot-name" title="'+(tb||'')+'">'+dispFb+'</span>'+fEarned(tb)+
         '</div>'+
       '</div>'+
     '</div>'+

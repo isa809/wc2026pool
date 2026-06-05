@@ -2875,17 +2875,22 @@ function renderAdminPlayers(){
   } else {
     users.forEach(([key,u])=>{
       const score=calcScore(key);
-      const sub1=getUserRound(key,1).submitted;
-      const sub2=getUserRound(key,2).submitted;
-      const sub3=getUserRound(key,3).submitted;
+      const subs=[1,2,3].map(r=>getUserRound(key,r).submitted);
+      const lbl=r=>r===3?'Final':'R'+r;
+      // Unlock controls — only for rounds the player has actually submitted.
+      let unlockBtns='';
+      subs.forEach((s,i)=>{
+        const r=i+1;
+        if(s) unlockBtns+=`<button class="btn-sm" data-unlock="${key}:${r}" title="Unlock this player's ${lbl(r)} so they can edit and resubmit" style="font-size:11px;padding:3px 7px">&#128275; ${lbl(r)}</button>`;
+      });
       html+=`<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
         <div class="av">${u.displayName.charAt(0).toUpperCase()}</div>
         <div style="flex:1;min-width:120px">
           <div style="font-size:13px;font-weight:600">${u.displayName}</div>
           <div style="font-size:11px;color:var(--muted)">${score} pts &nbsp;
-            ${sub1?'<span style="color:var(--green)">R1&#9989;</span>':'<span style="color:var(--muted)">R1&#9711;</span>'}&nbsp;
-            ${sub2?'<span style="color:var(--green)">R2&#9989;</span>':'<span style="color:var(--muted)">R2&#9711;</span>'}&nbsp;
-            ${sub3?'<span style="color:var(--green)">R3&#9989;</span>':'<span style="color:var(--muted)">R3&#9711;</span>'}
+            ${subs[0]?'<span style="color:var(--green)">R1&#9989;</span>':'<span style="color:var(--muted)">R1&#9711;</span>'}&nbsp;
+            ${subs[1]?'<span style="color:var(--green)">R2&#9989;</span>':'<span style="color:var(--muted)">R2&#9711;</span>'}&nbsp;
+            ${subs[2]?'<span style="color:var(--green)">R3&#9989;</span>':'<span style="color:var(--muted)">R3&#9711;</span>'}
           </div>
         </div>
         <input type="password" placeholder="New PIN" maxlength="4"
@@ -2893,6 +2898,10 @@ function renderAdminPlayers(){
         <button class="btn-sm" data-resetpin="${key}">Reset PIN</button>
         <button class="btn-sm btn-danger" data-removeuser="${key}" style="border-color:#f1a9a0;color:var(--red)">Remove</button>
       </div>`;
+      if(unlockBtns){
+        html+=`<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:0 0 10px 48px;border-bottom:1px solid var(--border);margin-top:-1px">
+          <span style="font-size:11px;color:var(--muted)">Unlock round:</span>${unlockBtns}</div>`;
+      }
     });
   }
   html+=`<div id="playerMsg" class="ok" style="margin-top:8px"></div></div>`;
@@ -3160,17 +3169,37 @@ function bindTab(){
   const advArea=document.getElementById("advRoundArea");
   if(advArea){
     const pr2=ST.predRound;
+    const rName=r=>r===3?'Final Pick':'Round '+r;
+    let inner='';
     if(pr2<3){
-      const advLabel=pr2===1?'&#128274; Lock Group Stage &amp; Open Round 2 Predictions':pr2===2?'&#128274; Lock Round 2 &amp; Open Round 3 — Final Pick':'Lock Round '+pr2+' &amp; Open Round '+(pr2+1);advArea.innerHTML='<button class="btn btn-green" id="advBtn" style="margin-bottom:8px">'+advLabel+'</button>';
+      inner+='<button class="btn btn-green" id="advBtn" style="margin-bottom:8px">'+
+        (pr2===1?'&#128274; Lock Group Stage &amp; Open Round 2 Predictions':pr2===2?'&#128274; Lock Round 2 &amp; Open Round 3 — Final Pick':'Lock Round '+pr2+' &amp; Open Round '+(pr2+1))+'</button>';
     } else {
-      advArea.innerHTML='<div class="notice-blue">Round 3 is the final prediction round.</div>';
+      inner+='<div class="notice-blue" style="margin-bottom:8px">Round 3 is the final prediction round.</div>';
     }
+    if(pr2>1){
+      inner+='<button class="btn btn-outline" id="reopenBtn" style="margin-bottom:0">&#128275; Reopen '+rName(pr2-1)+' for all players</button>'+
+        '<p style="font-size:11px;color:var(--muted);margin:6px 0 0">Rolls the pool back one round and unlocks it so everyone can edit and resubmit.</p>';
+    }
+    advArea.innerHTML=inner;
     const advBtn=document.getElementById("advBtn");
     if(advBtn) advBtn.onclick=()=>{
       const newPr=ST.predRound+1;
-      const msg="Lock Round "+ST.predRound+" and open Round "+newPr+" for all players? This cannot be undone.";
+      const msg="Lock "+rName(ST.predRound)+" and open "+rName(newPr)+" for all players? (You can reopen it later if needed.)";
       showConfirmModal(msg,function(){
-        ST.predRound=newPr;saveST();setTab();
+        ST.predRound=newPr;
+        if(CURRENT_POOL) CURRENT_POOL.predRound=newPr;
+        saveST();setTab();
+      });
+    };
+    const reopenBtn=document.getElementById("reopenBtn");
+    if(reopenBtn) reopenBtn.onclick=()=>{
+      const target=ST.predRound-1;
+      const msg="Reopen "+rName(target)+" for ALL players? The current round ("+rName(ST.predRound)+
+        ") will close and every player's "+rName(target)+" submission will be unlocked so they can change and resubmit it.";
+      showConfirmModal(msg,function(){
+        reopenRoundForAll(target);
+        setTab();
       });
     };
   }
@@ -3332,6 +3361,24 @@ function bindTab(){
     };
   });
 
+  /* unlock a single player's submitted round */
+  document.querySelectorAll("[data-unlock]").forEach(btn=>{
+    btn.onclick=()=>{
+      const [key,rStr]=btn.dataset.unlock.split(":");
+      const r=parseInt(rStr);
+      const u=ST.users[key];
+      if(!u||!u.rounds||!u.rounds[r]) return;
+      const name=u.displayName||key;
+      const rLbl=r===3?"Final Pick":"Round "+r;
+      const note=r===ST.predRound?"":" Note: "+rLbl+" isn't the current round, so they'll be able to edit it only once it's the open round again (e.g. after you reopen it).";
+      showConfirmModal("Unlock "+name+"'s "+rLbl+"? Their submission will be reopened so they can change and resubmit it."+note,function(){
+        u.rounds[r].submitted=false;
+        saveUserNode(key);
+        setTab();
+      });
+    };
+  });
+
   /* remove player */
   document.querySelectorAll("[data-removeuser]").forEach(btn=>{
     btn.onclick=()=>{
@@ -3475,6 +3522,28 @@ function removeUserNode(key){
   db.ref("pools/"+CURRENT_POOL_CODE+"/users/"+key).remove().catch(err=>console.error("Firebase remove error:",err));
 }
 
+/* Admin: roll the whole pool back to an earlier prediction round and unlock that
+   round for every player so they can edit and resubmit. */
+function reopenRoundForAll(targetRound){
+  Object.keys(ST.users).forEach(k=>{
+    const u=ST.users[k];
+    if(u&&u.rounds&&u.rounds[targetRound]) u.rounds[targetRound].submitted=false;
+  });
+  ST.predRound=targetRound;
+  if(CURRENT_POOL) CURRENT_POOL.predRound=targetRound;
+  saveAllUsersAndShared();
+}
+
+/* Persist predRound + every user node at once. Used only for deliberate admin
+   bulk operations (e.g. reopening a round); ordinary saves stay granular. */
+function saveAllUsersAndShared(){
+  if(!DB_READY||!CURRENT_POOL_CODE||!db){ saveST(); return; }
+  const base="pools/"+CURRENT_POOL_CODE;
+  const updates={[base+"/predRound"]:ST.predRound,[base+"/results"]:ST.results,[base+"/tournament"]:ST.tournament,[base+"/adminPin"]:ST.adminPin};
+  Object.keys(ST.users).forEach(k=>{ updates[base+"/users/"+k]=ST.users[k]; });
+  db.ref().update(updates).catch(err=>console.error("Firebase save error:",err));
+}
+
 function loadAllPools(callback){
   if(!db){callback("Firebase not initialized");return;}
   db.ref("pools").once("value").then(snapshot=>{
@@ -3491,6 +3560,7 @@ function listenForUpdates(){
     if(!DB_READY) return;
     const data=snapshot.val();
     if(!data) return;
+    const prevPredRound=ST.predRound;
     ST.results   =normResults(data.results||ST.results);
     ST.adminPin  =data.adminPin  ||ST.adminPin;
     ST.predRound =data.predRound ||ST.predRound;
@@ -3500,8 +3570,18 @@ function listenForUpdates(){
       CURRENT_POOL.tournament=ST.tournament;
     }
     const remoteUsers=data.users||{};
+    let ownUnlocked=false;
     Object.keys(remoteUsers).forEach(k=>{
-      if(!CU||k!==CU.key) ST.users[k]=remoteUsers[k];
+      if(!CU||k!==CU.key){ ST.users[k]=remoteUsers[k]; return; }
+      // Own node: keep local picks (don't clobber in-progress edits), but honor
+      // an admin UNLOCK — a round flipping submitted true→false remotely.
+      const localU=ST.users[k], remoteU=remoteUsers[k];
+      if(localU&&localU.rounds&&remoteU&&remoteU.rounds){
+        Object.keys(localU.rounds).forEach(rn=>{
+          const lr=localU.rounds[rn], rr=remoteU.rounds[rn];
+          if(lr&&lr.submitted&&rr&&rr.submitted===false){ lr.submitted=false; ownUnlocked=true; }
+        });
+      }
     });
     // Drop locally-cached players that were removed remotely (keep yourself and
     // the virtual super-admin account, which isn't persisted as a real player).
@@ -3510,7 +3590,9 @@ function listenForUpdates(){
       if(isSuperAdminEntry(k,ST.users[k])) return;
       if(!(k in remoteUsers)) delete ST.users[k];
     });
-    if(TAB==="lb"||TAB==="results") setTab();
+    // Re-render on round changes (either direction) and admin unlocks so players
+    // see a reopened round live, plus the usual standings/results refresh.
+    if(TAB==="lb"||TAB==="results"||ownUnlocked||prevPredRound!==ST.predRound) setTab();
     const scoreEl=document.getElementById("scoreDisplay");
     if(scoreEl&&CU) scoreEl.textContent=calcScore(CU.key)+" pts";
   });

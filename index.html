@@ -1612,7 +1612,11 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
       if(pick===team) return "selected";
       return "";
     }
-    var dis=submitted||!!result||forceLocked;
+    // The pick stays open until the player submits, an admin closes the
+    // tournament, or this is a read-only view. The final RESULT being entered
+    // no longer locks an unsubmitted player out — otherwise a straggler who
+    // never submitted Round 3 could never complete it once results are in.
+    var dis=submitted||forceLocked||ST.tournament==="done";
     html+="<div style=\"display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:16px\">";
 
     function teamCard(team){
@@ -1638,7 +1642,7 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
     html+="</div>";
   }
 
-  if(!submitted&&finalA&&finalB&&!forceLocked){
+  if(!submitted&&finalA&&finalB&&!forceLocked&&ST.tournament!=="done"){
     if(!pick){
       html+="<div class=\"notice-red\" style=\"margin-bottom:8px\">Pick your champion to submit.</div>";
       html+="<button class=\"btn-submit\" disabled>Submit Final Pick</button>";

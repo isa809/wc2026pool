@@ -2223,22 +2223,18 @@ function renderLB(){
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
   // You can view other players' predictions only after submitting the current
   // open round yourself (super admin can always view).
-  const canView=isSuperAdminUser()||getUserRound(CU.key,pr).submitted;
   let html=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
-  html+=canView
-    ?`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to view their predictions &amp; points</div>`
-    :`<div class="notice-blue" style="margin-bottom:8px">&#128274; Submit your <strong>Round ${pr}</strong> predictions to unlock viewing other players’ predictions.</div>`;
+  html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to view their predictions &amp; points</div>`;
   scores.forEach((p,i)=>{
     const isMe=p.key===CU.key;
-    const clickable=canView||isMe; // you can always view your own
-    html+=`<div class="lb-row"${clickable?` data-view-user="${p.key}" title="View ${p.name}'s predictions &amp; points"`:''} style="${clickable?'cursor:pointer;':''}${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
+    html+=`<div class="lb-row" data-view-user="${p.key}" title="View ${p.name}'s predictions &amp; points" style="cursor:pointer;${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
       <span class="lb-rank${i<3?" top":""}">${i+1}</span>
       <div class="av" style="${isMe?"background:var(--navy);color:#fff":""}">${p.name.charAt(0).toUpperCase()}</div>
       <span style="flex:1;font-size:14px;font-weight:${isMe?600:400}">${p.name}${isMe?" (you)":""}${p.submitted?`<span class="submitted-badge">R${pr} ✓</span>`:""}</span>
       <span class="lb-pts">${p.score}</span>
       <span style="font-size:11px;color:var(--muted);margin-left:2px">pts</span>
-      ${clickable?`<span style="font-size:16px;color:var(--muted);margin-left:6px">&#8250;</span>`:''}
+      <span style="font-size:16px;color:var(--muted);margin-left:6px">&#8250;</span>
     </div>`;
   });
   if(scores.length>1){
@@ -2293,6 +2289,15 @@ function renderViewUser(userKey){
   const rd=getUserRound(userKey,vr);
   const sub=rd.submitted;
   const draft=rd.picks||{group:{},ko:{}};
+
+  // Anti-copy gate: another player's CURRENT open round stays hidden until you
+  // submit that round yourself. Past/locked rounds are always viewable.
+  if(!isMe && !isSuper && vr===ST.predRound && !getUserRound(CU.key,vr).submitted){
+    html+='<div class="notice-blue"><strong>&#128274; Submit your Round '+vr+' predictions first.</strong> '+
+      'You’ll be able to see other players’ Round '+vr+' picks once you submit and lock your own. '+
+      '(Their points and any earlier locked rounds are shown above.)</div>';
+    return html;
+  }
 
   if(!sub && !isSuper){
     html+='<div class="notice-blue"><strong>Round '+vr+' not yet submitted.</strong> '+
@@ -3116,12 +3121,7 @@ function bindTab(){
 
   /* standings → view a player's predictions */
   document.querySelectorAll("[data-view-user]").forEach(row=>{
-    row.onclick=()=>{
-      const key=row.dataset.viewUser;
-      // Gate: viewing another player requires having submitted the current round.
-      if(key!==CU.key && !(isSuperAdminUser()||getUserRound(CU.key,ST.predRound).submitted)) return;
-      VIEWING=key; VIEWING_ROUND=ST.predRound; setTab();
-    };
+    row.onclick=()=>{ VIEWING=row.dataset.viewUser; VIEWING_ROUND=ST.predRound; setTab(); };
   });
   const vuBack=document.getElementById("viewUserBack");
   if(vuBack) vuBack.onclick=()=>{ VIEWING=null; setTab(); };

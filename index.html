@@ -841,6 +841,62 @@ function calcScore(userKey){
   return pts;
 }
 
+/* Detailed scoring for a user — totals by stage and by the round each pick was
+   first locked (group picks count as Round 1). Mirrors calcScore exactly, so
+   byStage and byRound each sum to the same total calcScore returns. */
+function roundPoints(userKey){
+  const picks=getMergedPicks(userKey);
+  const byRound={1:0,2:0,3:0};
+  const byStage={group:0,r32:0,r16:0,qf:0,sf:0,final:0};
+  let total=0;
+  for(const mid in ST.results.group){
+    const raw=ST.results.group[mid];
+    const res=typeof raw==="object"?raw.result:raw;
+    const p=picks.group[mid];
+    if(!p||!res) continue;
+    let pt; if(p===res)pt=SC.groupCorrect; else if(res==="D")pt=SC.groupDraw; else pt=SC.groupWrong;
+    byStage.group+=pt; byRound[1]+=pt; total+=pt;
+  }
+  for(const key in ST.results.ko){
+    if(key.endsWith("_t3")) continue;
+    const res=ST.results.ko[key];const p=picks.ko[key];
+    if(!p) continue;
+    const rnd=key.split("_")[0];const sc=SC.ko[rnd];
+    if(!sc) continue;
+    let pickedTeam=p.team;
+    if(pickedTeam==="__t3__") pickedTeam=picks.ko[key+"_t3"]||null;
+    if(pickedTeam&&pickedTeam===res){
+      const pt=sc.base+(sc.bonus[(p.round||1)-1]||0);
+      const orig=p.round||1;
+      byStage[rnd]+=pt; byRound[orig]=(byRound[orig]||0)+pt; total+=pt;
+    }
+  }
+  return {byRound,byStage,total};
+}
+
+/* A points-breakdown card. focusRound (optional) adds a line attributing points
+   to the picks first locked in that round. */
+function renderPointsBreakdown(userKey,focusRound){
+  const anyResults=Object.keys(ST.results.group).length>0||Object.keys(ST.results.ko).length>0;
+  let html='<div class="card"><div class="card-title">Points breakdown</div>';
+  if(!anyResults){
+    return html+'<div class="notice-blue" style="margin-bottom:0">No match results entered yet — points will appear here once the admin records results.</div></div>';
+  }
+  const {byRound,byStage,total}=roundPoints(userKey);
+  const rows=[['Group stage','group'],['Round of 32','r32'],['Round of 16','r16'],['Quarterfinals','qf'],['Semifinals','sf'],['Final','final']];
+  html+='<table style="width:100%;font-size:13px;border-collapse:collapse">';
+  rows.forEach(function(rw){
+    html+='<tr><td style="padding:4px 0;color:var(--muted)">'+rw[0]+'</td>'+
+      '<td style="text-align:right;font-weight:600">'+byStage[rw[1]]+' pts</td></tr>';
+  });
+  html+='<tr style="border-top:2px solid var(--border)"><td style="padding:6px 0;font-weight:700">Total</td>'+
+    '<td style="text-align:right;font-weight:700;color:var(--fifa-blue)">'+total+' pts</td></tr></table>';
+  if(focusRound){
+    html+='<div class="notice" style="margin-top:10px;margin-bottom:0">Points from picks first locked in <strong>Round '+focusRound+'</strong>: <strong>'+(byRound[focusRound]||0)+' pts</strong></div>';
+  }
+  return html+'</div>';
+}
+
 function getUserRound(userKey,rn){
   const u=ST.users[userKey];
   if(!u||!u.rounds||!u.rounds[rn]) return{picks:{group:{},ko:{}},submitted:false};
@@ -2140,18 +2196,24 @@ function renderLB(){
       submitted:getUserRound(k,pr).submitted
     })).sort((a,b)=>b.score-a.score);
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
+  // You can view other players' predictions only after submitting the current
+  // open round yourself (super admin can always view).
+  const canView=isSuperAdminUser()||getUserRound(CU.key,pr).submitted;
   let html=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
-  html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to view their predictions</div>`;
+  html+=canView
+    ?`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to view their predictions &amp; points</div>`
+    :`<div class="notice-blue" style="margin-bottom:8px">&#128274; Submit your <strong>Round ${pr}</strong> predictions to unlock viewing other players’ predictions.</div>`;
   scores.forEach((p,i)=>{
     const isMe=p.key===CU.key;
-    html+=`<div class="lb-row" data-view-user="${p.key}" title="View ${p.name}'s predictions" style="cursor:pointer;${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
+    const clickable=canView||isMe; // you can always view your own
+    html+=`<div class="lb-row"${clickable?` data-view-user="${p.key}" title="View ${p.name}'s predictions &amp; points"`:''} style="${clickable?'cursor:pointer;':''}${isMe?"background:var(--navygl);border-radius:8px;padding:9px 8px;margin:0 -8px":""}">
       <span class="lb-rank${i<3?" top":""}">${i+1}</span>
       <div class="av" style="${isMe?"background:var(--navy);color:#fff":""}">${p.name.charAt(0).toUpperCase()}</div>
       <span style="flex:1;font-size:14px;font-weight:${isMe?600:400}">${p.name}${isMe?" (you)":""}${p.submitted?`<span class="submitted-badge">R${pr} ✓</span>`:""}</span>
       <span class="lb-pts">${p.score}</span>
       <span style="font-size:11px;color:var(--muted);margin-left:2px">pts</span>
-      <span style="font-size:16px;color:var(--muted);margin-left:6px">&#8250;</span>
+      ${clickable?`<span style="font-size:16px;color:var(--muted);margin-left:6px">&#8250;</span>`:''}
     </div>`;
   });
   if(scores.length>1){
@@ -2186,6 +2248,9 @@ function renderViewUser(userKey){
         '<div style="font-size:12px;color:var(--muted)">'+score+' pts'+(isSuper?' &middot; super-admin view':'')+'</div>'+
       '</div>'+
     '</div></div>';
+
+  // Their points details (Feature 3) — focus on the round currently selected.
+  html+=renderPointsBreakdown(userKey,vr);
 
   // Round selector — always show all three; grey out rounds that haven't opened yet.
   html+='<div class="round-toggle">';
@@ -2999,6 +3064,7 @@ function bindTab(){
       const tc=document.getElementById("tc");
       if(!tc) return;
       let html=renderRoundToggle(r);
+      html+=renderPointsBreakdown(CU.key,r);
       const pastSub=getUserRound(CU.key,r).submitted;
       if(r===3){
         html+=renderFinalPickOnly(pastDraft,pastSub,r);
@@ -3025,7 +3091,12 @@ function bindTab(){
 
   /* standings → view a player's predictions */
   document.querySelectorAll("[data-view-user]").forEach(row=>{
-    row.onclick=()=>{ VIEWING=row.dataset.viewUser; VIEWING_ROUND=ST.predRound; setTab(); };
+    row.onclick=()=>{
+      const key=row.dataset.viewUser;
+      // Gate: viewing another player requires having submitted the current round.
+      if(key!==CU.key && !(isSuperAdminUser()||getUserRound(CU.key,ST.predRound).submitted)) return;
+      VIEWING=key; VIEWING_ROUND=ST.predRound; setTab();
+    };
   });
   const vuBack=document.getElementById("viewUserBack");
   if(vuBack) vuBack.onclick=()=>{ VIEWING=null; setTab(); };

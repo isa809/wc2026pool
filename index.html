@@ -22,7 +22,7 @@
 
   SCORING (max 225 pts)
   ──────────────────────
-  Group: +2 correct / +1 draw / -1 wrong → 96 pts max
+  Group: +2 correct / +2 draw / -1 wrong → 96 pts max
   R32:   +2 base + +1 if picked in R1   → 48 pts max
   R16:   +2 base + +1 if picked in R1   → 24 pts max
   QF:    +3 base + +1 if picked in R1   → 16 pts max
@@ -467,7 +467,7 @@ if(IS_FIREBASE_CONFIGURED){
    Bonus based on which round a pick was FIRST made (changing pick resets round).
 */
 const SC={
-  groupCorrect:2,groupDraw:1,groupWrong:-1,
+  groupCorrect:2,groupDraw:2,groupWrong:-1,
   ko:{
     r32:  {base:3,bonus:[1,0,0]},   // max 4 if picked in R1
     r16:  {base:3,bonus:[1,0,0]},   // max 4
@@ -477,7 +477,7 @@ const SC={
   }
 };
 /* SCORING SUMMARY (max 225 pts)
-   Group: +2 correct | +1 draw | -1 wrong  → max 96
+   Group: +2 correct | +2 draw | -1 wrong  → max 96
    R32:   +3 base + +1 if picked in R1     → max 64
    R16:   +3 base + +1 if picked in R1     → max 32
    QF:    +3 base + +1 if picked in R1     → max 16
@@ -1661,7 +1661,7 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
 function renderGroupPicks(draft,locked){
   let html=`<div class="card">
     <div class="card-title">Group stage ${locked?'<span style="font-size:11px;font-weight:400;color:var(--muted)">locked</span>':''}</div>
-    <div class="notice">+2 correct &nbsp;|&nbsp; +1 draw &nbsp;|&nbsp; -1 wrong — pick result for every match</div>
+    <div class="notice">+2 correct &nbsp;|&nbsp; +2 draw &nbsp;|&nbsp; -1 wrong — pick result for every match</div>
     <div class="group-grid">`;
   for(const g in GM){
     html+=`<div class="g-card"><div class="g-label">Group ${g}</div>`;
@@ -2372,10 +2372,10 @@ function renderScoring(){
           '<td style="text-align:center">2</td>'+
           '<td style="text-align:center;font-weight:600">96</td></tr>'+
         '<tr><td><strong>Group</strong> — draw</td>'+
-          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+1</td>'+
+          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+2</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center">1</td>'+
+          '<td style="text-align:center">2</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td></tr>'+
         '<tr><td><strong>Group</strong> — wrong</td>'+
           '<td style="text-align:center;color:var(--red);font-weight:600">&minus;1</td>'+

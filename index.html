@@ -836,8 +836,10 @@ function calcScore(userKey){
     const res=typeof raw==="object"?raw.result:raw;
     const p=picks.group[mid];
     if(!p||!res) continue;
-    if(p===res)pts+=SC.groupCorrect;
-    else if(res==="D")pts+=SC.groupDraw;
+    // Score only the player's own pick: a correct draw earns groupDraw, a
+    // correct win/loss earns groupCorrect, anything else (incl. picking a side
+    // on a match that ended in a draw) is a wrong pick.
+    if(p===res)pts+=(res==="D"?SC.groupDraw:SC.groupCorrect);
     else pts+=SC.groupWrong;
   }
   for(const key in ST.results.ko){
@@ -869,7 +871,7 @@ function roundPoints(userKey){
     const res=typeof raw==="object"?raw.result:raw;
     const p=picks.group[mid];
     if(!p||!res) continue;
-    let pt; if(p===res)pt=SC.groupCorrect; else if(res==="D")pt=SC.groupDraw; else pt=SC.groupWrong;
+    let pt; if(p===res)pt=(res==="D"?SC.groupDraw:SC.groupCorrect); else pt=SC.groupWrong;
     byStage.group+=pt; byRound[1]+=pt; total+=pt;
   }
   for(const key in ST.results.ko){
@@ -1661,7 +1663,7 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
 function renderGroupPicks(draft,locked){
   let html=`<div class="card">
     <div class="card-title">Group stage ${locked?'<span style="font-size:11px;font-weight:400;color:var(--muted)">locked</span>':''}</div>
-    <div class="notice">+2 correct &nbsp;|&nbsp; +2 draw &nbsp;|&nbsp; -1 wrong — pick result for every match</div>
+    <div class="notice">+2 correct (incl. a correct draw) &nbsp;|&nbsp; -1 wrong — pick the exact result for every match</div>
     <div class="group-grid">`;
   for(const g in GM){
     html+=`<div class="g-card"><div class="g-label">Group ${g}</div>`;
@@ -2116,7 +2118,7 @@ function renderResults(){
       const myPick=mp.group[m.id]||null;
       let chip="";
       if(res&&myPick){
-        const pts=myPick===res?SC.groupCorrect:res==="D"?SC.groupDraw:SC.groupWrong;
+        const pts=myPick===res?(res==="D"?SC.groupDraw:SC.groupCorrect):SC.groupWrong;
         chip='<span class="chip '+(pts>0?"chip-ok":"chip-no")+'">'+(pts>0?"+":"")+pts+'</span>';
       }
       const scoreStr=(hg!==""&&ag!=="")?" "+hg+"-"+ag:"";
@@ -2192,8 +2194,7 @@ function renderResults(){
     const res=typeof raw==="object"?raw.result:raw;
     const p=mp.group[mid];
     if(!p||!res) continue;
-    if(p===res)groupScore+=SC.groupCorrect;
-    else if(res==="D")groupScore+=SC.groupDraw;
+    if(p===res)groupScore+=(res==="D"?SC.groupDraw:SC.groupCorrect);
     else groupScore+=SC.groupWrong;
   }
 
@@ -2371,7 +2372,7 @@ function renderScoring(){
           '<td style="text-align:center;color:var(--muted)">—</td>'+
           '<td style="text-align:center">2</td>'+
           '<td style="text-align:center;font-weight:600">96</td></tr>'+
-        '<tr><td><strong>Group</strong> — draw</td>'+
+        '<tr><td><strong>Group</strong> — correct draw</td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+2</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+

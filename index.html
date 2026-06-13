@@ -2871,9 +2871,16 @@ function renderAdminKnockout(){
 
 function renderAdminPlayers(){
   const users=Object.entries(ST.users).filter(([k,u])=>!isSuperAdminEntry(k,u));
+  const isSuper=isSuperAdminUser();
+  // Count picks made in a given prediction round (group + ko entries).
+  const pickCount=(u,r)=>{
+    const rd=u&&u.rounds&&u.rounds[r];
+    if(!rd||!rd.picks) return 0;
+    return (rd.picks.group?Object.keys(rd.picks.group).length:0)+(rd.picks.ko?Object.keys(rd.picks.ko).length:0);
+  };
   let html=`<div class="card">
     <div class="card-title">Player management</div>
-    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.</div>`;
+    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.${isSuper?' &mdash; <strong>Submit R1</strong> locks Round 1 for a player who made picks but hasn&rsquo;t submitted.':''}</div>`;
 
   if(!users.length){
     html+=`<p style="font-size:13px;color:var(--muted);padding:10px 0">No players registered yet.</p>`;
@@ -2882,6 +2889,18 @@ function renderAdminPlayers(){
       const score=calcScore(key);
       const subs=[1,2,3].map(r=>getUserRound(key,r).submitted);
       const lbl=r=>r===3?'Final':'R'+r;
+      const r1Picks=pickCount(u,1);
+      // R1 chip: locked ✅ when submitted; greyed ✅ when picks exist but not yet
+      // submitted; empty ⭕ when nothing has been picked.
+      const r1Chip=subs[0]
+        ? '<span style="color:var(--green)">R1&#9989;</span>'
+        : (r1Picks>0
+            ? '<span style="color:var(--muted);opacity:.5" title="Picks made, not yet submitted">R1&#9989;</span>'
+            : '<span style="color:var(--muted)">R1&#9711;</span>');
+      // Super admin only: submit-on-behalf for a player with R1 picks but no submit.
+      const submitR1Btn=(isSuper&&!subs[0]&&r1Picks>0)
+        ? `<button class="btn-sm" data-submitr1="${key}" title="Submit &amp; lock this player's Round 1 picks for them" style="border-color:var(--fifa-gold);color:#7a5c10;background:#fdf6e3">Submit R1</button>`
+        : '';
       // Unlock controls — only for rounds the player has actually submitted.
       let unlockBtns='';
       subs.forEach((s,i)=>{
@@ -2893,11 +2912,12 @@ function renderAdminPlayers(){
         <div style="flex:1;min-width:120px">
           <div style="font-size:13px;font-weight:600">${u.displayName}</div>
           <div style="font-size:11px;color:var(--muted)">${score} pts &nbsp;
-            ${subs[0]?'<span style="color:var(--green)">R1&#9989;</span>':'<span style="color:var(--muted)">R1&#9711;</span>'}&nbsp;
+            ${r1Chip}&nbsp;
             ${subs[1]?'<span style="color:var(--green)">R2&#9989;</span>':'<span style="color:var(--muted)">R2&#9711;</span>'}&nbsp;
             ${subs[2]?'<span style="color:var(--green)">R3&#9989;</span>':'<span style="color:var(--muted)">R3&#9711;</span>'}
           </div>
         </div>
+        ${submitR1Btn}
         <input type="password" placeholder="New PIN" maxlength="4"
           id="pin_${key}" style="width:90px;margin:0;padding:5px 8px;font-size:12px"/>
         <button class="btn-sm" data-resetpin="${key}">Reset PIN</button>
@@ -3386,6 +3406,31 @@ function bindTab(){
     };
   });
 
+  /* super admin: submit Round 1 on behalf of a player who made picks but
+     hasn't submitted. Only flips the submitted flag — never alters picks. */
+  document.querySelectorAll("[data-submitr1]").forEach(btn=>{
+    btn.onclick=()=>{
+      const key=btn.dataset.submitr1;
+      const u=ST.users[key];
+      const msg=document.getElementById("playerMsg");
+      const fail=t=>{ if(msg){msg.className="err";msg.textContent=t;} };
+      const name=(u&&u.displayName)||key;
+      if(!u||!u.rounds||!u.rounds[1]){ fail(name+" has no Round 1 data to submit."); return; }
+      if(u.rounds[1].submitted===true){ fail(name+" has already submitted Round 1."); return; }
+      const picks=u.rounds[1].picks||{};
+      const n=(picks.group?Object.keys(picks.group).length:0)+(picks.ko?Object.keys(picks.ko).length:0);
+      if(n===0){ fail(name+" has no Round 1 picks to submit."); return; }
+      showConfirmModal("Submit Round 1 picks for "+name+"? Their picks will be locked.",function(){
+        u.rounds[1].submitted=true;
+        if(!u.history) u.history=[];
+        u.history.push({ts:Date.now(),predRound:1,picks:JSON.parse(JSON.stringify(u.rounds[1].picks)),submittedBy:"superadmin"});
+        // Persist THIS player's node (saveST only writes the current/admin user).
+        saveUserNode(key);
+        setTab();
+      });
+    };
+  });
+
   /* unlock a single player's submitted round */
   document.querySelectorAll("[data-unlock]").forEach(btn=>{
     btn.onclick=()=>{
@@ -3602,16 +3647,17 @@ function listenForUpdates(){
       CURRENT_POOL.tournament=ST.tournament;
     }
     const remoteUsers=data.users||{};
-    let ownUnlocked=false;
+    let ownChanged=false;
     Object.keys(remoteUsers).forEach(k=>{
       if(!CU||k!==CU.key){ ST.users[k]=remoteUsers[k]; return; }
-      // Own node: keep local picks (don't clobber in-progress edits), but honor
-      // an admin UNLOCK — a round flipping submitted true→false remotely.
+      // Own node: keep local picks (don't clobber in-progress edits), but sync an
+      // admin-driven submitted flag change — an UNLOCK (true→false) or a
+      // submit-on-behalf (false→true) — so it reflects live on this device.
       const localU=ST.users[k], remoteU=remoteUsers[k];
       if(localU&&localU.rounds&&remoteU&&remoteU.rounds){
         Object.keys(localU.rounds).forEach(rn=>{
           const lr=localU.rounds[rn], rr=remoteU.rounds[rn];
-          if(lr&&lr.submitted&&rr&&rr.submitted===false){ lr.submitted=false; ownUnlocked=true; }
+          if(lr&&rr&&typeof rr.submitted==="boolean"&&lr.submitted!==rr.submitted){ lr.submitted=rr.submitted; ownChanged=true; }
         });
       }
     });
@@ -3624,7 +3670,7 @@ function listenForUpdates(){
     });
     // Re-render on round changes (either direction) and admin unlocks so players
     // see a reopened round live, plus the usual standings/results refresh.
-    if(TAB==="lb"||TAB==="results"||ownUnlocked||prevPredRound!==ST.predRound||prevTournament!==ST.tournament) setTab();
+    if(TAB==="lb"||TAB==="results"||ownChanged||prevPredRound!==ST.predRound||prevTournament!==ST.tournament) setTab();
     const scoreEl=document.getElementById("scoreDisplay");
     if(scoreEl&&CU) scoreEl.textContent=calcScore(CU.key)+" pts";
   });

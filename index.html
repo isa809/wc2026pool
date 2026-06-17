@@ -1198,6 +1198,22 @@ function bindCreatePool(){
 function renderJoin(){
   const pool=CURRENT_POOL;
   const poolName=pool?pool.name:APP_NAME;
+  const locked=!!(pool&&pool.locked);
+  const registerCard=locked
+    ? '<div class="login-divider">New to this pool?</div>'+
+      '<div class="card">'+
+        '<div class="notice-red" style="margin-bottom:0">&#128274; <strong>This pool is locked.</strong> No new players can join. '+
+        'If you already have an account, sign in above.</div>'+
+      '</div>'
+    : '<div class="login-divider">New to this pool?</div>'+
+      '<div class="card">'+
+        '<div class="card-title">Create account</div>'+
+        '<input id="jpPass" type="password" placeholder="Pool join password" autocomplete="off"/>'+
+        '<input id="rN" placeholder="Choose a display name" autocomplete="off"/>'+
+        '<input id="rP" type="password" placeholder="Create a 4-digit PIN" maxlength="4"/>'+
+        '<button class="btn btn-outline" id="rBtn">Join Pool</button>'+
+        '<div id="rErr" class="err"></div>'+
+      '</div>';
   return '<div class="hero">'+
     '<div class="hero-flag-strip"></div>'+
     '<div class="hero-inner">'+
@@ -1216,15 +1232,7 @@ function renderJoin(){
       '<button class="btn btn-navy" id="liBtn">&#9917; Enter</button>'+
       '<div id="liErr" class="err"></div>'+
     '</div>'+
-    '<div class="login-divider">New to this pool?</div>'+
-    '<div class="card">'+
-      '<div class="card-title">Create account</div>'+
-      '<input id="jpPass" type="password" placeholder="Pool join password" autocomplete="off"/>'+
-      '<input id="rN" placeholder="Choose a display name" autocomplete="off"/>'+
-      '<input id="rP" type="password" placeholder="Create a 4-digit PIN" maxlength="4"/>'+
-      '<button class="btn btn-outline" id="rBtn">Join Pool</button>'+
-      '<div id="rErr" class="err"></div>'+
-    '</div>'+
+    registerCard+
     '<div style="text-align:center;margin-top:4px">'+
       '<div class="notice-blue" style="font-size:11px;margin-bottom:0">&#128161; Testing locally? Open this link in a <strong>regular tab</strong> (not incognito) — pools are shared via Firebase once configured.</div>'+
     '<button style="background:none;border:none;font-size:12px;color:var(--muted);cursor:pointer;font-family:DM Sans,sans-serif" id="joinBack">&#8592; Different pool</button>'+
@@ -1249,8 +1257,9 @@ function bindJoin(){
     VIEW="main";TAB="picks";listenForUpdates();render();
   };
   document.getElementById("liP").onkeydown=e=>{if(e.key==="Enter")document.getElementById("liBtn").click();};
-  // Register
-  document.getElementById("rBtn").onclick=()=>{
+  // Register — absent when the pool is locked (no card rendered).
+  const rBtn=document.getElementById("rBtn");
+  if(rBtn) rBtn.onclick=()=>{
     const pass=document.getElementById("jpPass").value.trim();
     const name=document.getElementById("rN").value.trim();
     const pin=document.getElementById("rP").value.trim();
@@ -1263,10 +1272,26 @@ function bindJoin(){
     if(!/^\d{4}$/.test(pin)){err.textContent="PIN must be 4 digits.";return;}
     const key=nk(name);
     if(ST.users[key]){err.textContent="Name already taken in this pool.";return;}
-    ST.users[key]={displayName:name,pin,rounds:{},history:[]};
-    CU={key,displayName:name,pin};
-    saveST();
-    VIEW="main";TAB="picks";listenForUpdates();render();
+    // Defensive live check: the super admin may have locked the pool after this
+    // page loaded. Confirm against the latest state before admitting a player.
+    const proceed=()=>{
+      ST.users[key]={displayName:name,pin,rounds:{},history:[]};
+      CU={key,displayName:name,pin};
+      saveST();
+      VIEW="main";TAB="picks";listenForUpdates();render();
+    };
+    if(db&&CURRENT_POOL_CODE){
+      rBtn.disabled=true;
+      db.ref("pools/"+CURRENT_POOL_CODE+"/locked").once("value").then(snap=>{
+        if(snap.val()){
+          if(CURRENT_POOL) CURRENT_POOL.locked=true;
+          err.textContent="This pool is now locked — no new players can join.";
+          render();
+          return;
+        }
+        proceed();
+      }).catch(()=>{ rBtn.disabled=false; proceed(); });
+    } else proceed();
   };
 }
 
@@ -1331,6 +1356,8 @@ function bindSuperAdmin(){
       pools.forEach(pool=>{
         const userCount=Object.keys(pool.users||{}).length;
         const statusColor=pool.tournament==="done"?"var(--green)":"var(--fifa-blue-mid)";
+        const isLocked=!!pool.locked;
+        const lockBadge=isLocked?'&nbsp;·&nbsp;<span style="color:var(--red);font-weight:600">&#128274; Locked</span>':'';
         html+=
           '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px" data-pool-card="'+pool.code+'">'+
             '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'+
@@ -1340,6 +1367,7 @@ function bindSuperAdmin(){
                   'Code: <strong>'+pool.code+'</strong> &nbsp;·&nbsp; '+
                   userCount+' player'+(userCount!==1?"s":"")+'&nbsp;·&nbsp;'+
                   '<span style="color:'+statusColor+'">Round '+pool.predRound+(pool.tournament==="done"?" · Complete":""  )+'</span>'+
+                  lockBadge+
                 '</div>'+
                 '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+
                   'Join pwd: <strong>'+(pool.joinPassword||"—")+'</strong>'+
@@ -1347,6 +1375,7 @@ function bindSuperAdmin(){
               '</div>'+
               '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
                 '<button class="btn-sm" data-enter-pool="'+pool.code+'">&#9654; Enter</button>'+
+                '<button class="btn-sm'+(isLocked?'':' btn-danger')+'" data-lock-pool="'+pool.code+'" data-locked="'+(isLocked?"1":"0")+'">'+(isLocked?'&#128275; Unlock joining':'&#128274; Lock joining')+'</button>'+
                 '<button class="btn-sm" data-rename-pool="'+pool.code+'" data-pool-name="'+pool.name+'">&#9998; Rename</button>'+
                 '<button class="btn-sm btn-danger" data-delete-pool="'+pool.code+'">&#128465; Delete</button>'+
               '</div>'+
@@ -1384,6 +1413,33 @@ function bindSuperAdmin(){
             VIEW="main";TAB="admin";
             listenForUpdates();
             render();
+          });
+        };
+      });
+
+      // ── Lock / Unlock joining ───────────────────────────────────
+      // Toggles ONLY the pool's `locked` flag — never touches users,
+      // picks, results, or any other pool setting.
+      el.querySelectorAll("[data-lock-pool]").forEach(btn=>{
+        btn.onclick=()=>{
+          const code=btn.dataset.lockPool;
+          const willLock=btn.dataset.locked!=="1";
+          const card=el.querySelector("[data-pool-card='"+code+"']");
+          const name=card?card.querySelector("[style*='font-weight:700']").textContent:code;
+          const msg=willLock
+            ?'Lock "'+name+'"? No new players will be able to join. Existing players keep full access.'
+            :'Unlock "'+name+'"? New players will be able to join again.';
+          showConfirmModal(msg,()=>{
+            btn.disabled=true; btn.textContent="Saving...";
+            const done=()=>renderPoolList();
+            if(IS_FIREBASE_CONFIGURED&&db){
+              db.ref("pools/"+code+"/locked").set(willLock).then(done)
+                .catch(e=>{ btn.disabled=false; showConfirmModal("Error: "+e.message,()=>{}); });
+            } else {
+              const pools=LS.get("pools")||{};
+              if(pools[code]) pools[code].locked=willLock;
+              LS.set("pools",pools); done();
+            }
           });
         };
       });
@@ -4120,7 +4176,8 @@ function loadPool(code, callback){
       joinPassword:data.joinPassword||"",
       adminKey:data.adminKey||"",
       predRound:data.predRound||1,
-      tournament:data.tournament||"active"
+      tournament:data.tournament||"active",
+      locked:!!data.locked
     };
     ST.users     =data.users     ||{};
     ST.results   =normResults(data.results);
@@ -4241,6 +4298,7 @@ function listenForUpdates(){
     if(CURRENT_POOL){
       CURRENT_POOL.predRound =ST.predRound;
       CURRENT_POOL.tournament=ST.tournament;
+      CURRENT_POOL.locked    =!!data.locked;
     }
     const remoteUsers=data.users||{};
     let ownChanged=false;

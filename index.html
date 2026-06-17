@@ -2187,7 +2187,7 @@ function groupResultCards(mp){
 function renderPlayerByRound(userKey){
   const mp=getMergedPicks(userKey);
   const draft={group:mp.group||{},ko:mp.ko||{}};
-  return renderBracket(draft,true,ST.predRound,koScoreMeta(userKey))+groupResultCards(mp);
+  return groupResultCards(mp)+renderBracket(draft,true,ST.predRound,koScoreMeta(userKey));
 }
 
 function renderResults(){

@@ -3141,7 +3141,11 @@ function bindMain(){
   const saSwitchPool=document.getElementById("saSwitchPool");
   if(saSwitchPool) saSwitchPool.onclick=backToPools;
   document.getElementById("logoutBtn").onclick=()=>{CU=null;VIEW="join";ADMIN_ON=false;render();};
-  document.querySelectorAll(".tab[data-tab]").forEach(t=>{t.onclick=()=>{TAB=t.dataset.tab;VIEWING=null;setTab();};});
+  document.querySelectorAll(".tab[data-tab]").forEach(t=>{t.onclick=()=>{
+    // Results tab always opens on the bracket ("By round"); the date view is opt-in.
+    if(t.dataset.tab==="results") RESULTS_VIEW="round";
+    TAB=t.dataset.tab;VIEWING=null;setTab();
+  };});
   bindTab();
   updateMissCount();
 }

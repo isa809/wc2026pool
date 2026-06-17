@@ -2147,15 +2147,23 @@ function renderLBPanel(targetKey){
   }
   const mode=PLAYER_VIEW[targetKey]||'round';
   return viewToggle(mode,'data-pview',targetKey)+
-    '<div id="lbpanelbody_'+targetKey+'">'+(mode==='date'?renderByDate(targetKey):renderPicksByRound(targetKey))+'</div>';
+    '<div id="lbpanelbody_'+targetKey+'">'+(mode==='date'?renderByDate(targetKey):renderResultsBody(targetKey,false))+'</div>';
 }
 
 function renderResults(){
   // Feature: chronological "By date" alternative to the existing by-round view.
   const toggle=viewToggle(RESULTS_VIEW,'data-results-view');
   if(RESULTS_VIEW==="date") return toggle+renderByDate(CU.key);
-  const mp=getMergedPicks(CU.key);
+  return toggle+renderResultsBody(CU.key,true);
+}
+
+/* The original Results view — group-stage cards (with pick/result/points chips)
+   plus the visual knockout bracket (picks highlighted, per-slot base+bonus,
+   trophies, champion box) — rendered for ANY user. selfView toggles wording. */
+function renderResultsBody(userKey,selfView){
+  const mp=getMergedPicks(userKey);
   const actS=actualStandings();
+  const pw=selfView?"your pick":"their pick";
 
   // ── Helper: get teams for a KO match from cascade ──────────────────
   function getMatchTeams(rid,i){
@@ -2246,7 +2254,7 @@ function renderResults(){
         '<div style="flex:1;min-width:0">'+
           '<span class="slot-name" style="'+(won?"color:#fff;font-weight:600":"")+'" title="'+team+'">'+team+'</span>'+
           (picked?'<div style="font-size:9px;color:'+(won?"rgba(255,255,255,.75)":wrong?"var(--red)":"var(--muted)")+';margin-top:1px">'+
-            (won?"&#10003; your pick":wrong?"&#10007; your pick":"your pick")+
+            (won?"&#10003; "+pw:wrong?"&#10007; "+pw:pw)+
           '</div>':'') +
         '</div>'+
         ptsLabel+
@@ -2341,7 +2349,7 @@ function renderResults(){
     return '<div class="final-slot" style="'+style+'">'+
       '<div style="flex:1;min-width:0">'+
         '<span class="slot-name" style="'+(won?"color:#fff;font-weight:600":"")+'" title="'+team+'">'+team+'</span>'+
-        (picked?'<div style="font-size:9px;color:'+(won?"rgba(255,255,255,.75)":wrong?"var(--red)":"var(--muted)")+';margin-top:1px">'+(won?"&#10003; your pick":wrong?"&#10007; your pick":"your pick")+'</div>':'')+
+        (picked?'<div style="font-size:9px;color:'+(won?"rgba(255,255,255,.75)":wrong?"var(--red)":"var(--muted)")+';margin-top:1px">'+(won?"&#10003; "+pw:wrong?"&#10007; "+pw:pw)+'</div>':'')+
       '</div>'+
       ptsLabel+
       (won?'<span style="font-size:13px;color:'+(picked?"#fff":"rgba(255,255,255,.7)")+';margin-left:4px;flex-shrink:0">&#127942;</span>':'')+
@@ -2372,7 +2380,7 @@ function renderResults(){
 
   // ── Assemble ───────────────────────────────────────────────────────
   let html='<div class="notice-blue" style="display:flex;align-items:center;justify-content:space-between">'+
-    '<span>Results update as admin enters actuals. &#10003; = your pick was correct.</span>'+
+    '<span>Results update as admin enters actuals. &#10003; = '+(selfView?"your":"their")+' pick was correct.</span>'+
     '<span style="font-family:Bebas Neue,sans-serif;font-size:18px;color:var(--navy)">Total: '+(groupScore+koScore)+' pts</span>'+
   '</div>';
 
@@ -2397,7 +2405,7 @@ function renderResults(){
           finalSlot(fhome)+
           finalSlot(faway)+
         '</div>'+
-        (fmyPickTeam&&!fres?'<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">Your pick: <strong>'+fmyPickTeam+'</strong></div>':'')+
+        (fmyPickTeam&&!fres?'<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">'+(selfView?"Your":"Their")+' pick: <strong>'+fmyPickTeam+'</strong></div>':'')+
       '</div>'+
     '</div>';
     html+='</div></div></div>';
@@ -2406,7 +2414,7 @@ function renderResults(){
   }
 
   html+=groupHtml;
-  return toggle+html;
+  return html;
 }
 
 function renderLB(){
@@ -3381,7 +3389,7 @@ function bindTab(){
       const parts=b.dataset.pview.split(":"); const k=parts[0], mode=parts[1];
       PLAYER_VIEW[k]=mode;
       const body=document.getElementById("lbpanelbody_"+k);
-      if(body) body.innerHTML=(mode==="date"?renderByDate(k):renderPicksByRound(k));
+      if(body) body.innerHTML=(mode==="date"?renderByDate(k):renderResultsBody(k,false));
       document.querySelectorAll('[data-pview^="'+k+':"]').forEach(x=>{
         const on=x.dataset.pview===k+":"+mode;
         x.style.background=on?"var(--navy)":"transparent";

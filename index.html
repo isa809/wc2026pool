@@ -572,6 +572,17 @@ let RESULTS_VIEW="round";
 const EXPANDED={};
 const PLAYER_VIEW={};
 
+/* Super-admin "Global Results" screen (push one result to ALL pools at once).
+   SA_GLOBAL toggles the screen within the VIEW="super" route. GLOBAL_RESULTS is
+   a working copy of the canonical results (group/ko/koMatches) seeded from the
+   union of all pools when the screen opens; pushing writes specific match keys
+   to every pool. GLOBAL_POOLS caches {code,players} for the confirm/push step. */
+let SA_GLOBAL=false;
+let GLOBAL_RESULTS={group:{},ko:{},koMatches:{}};
+let GLOBAL_POOLS=[];
+let GLOBAL_SAVED_RESULTS=null; /* ST.results stash to restore on exit */
+let GLOBAL_MSG=null; /* {text,ok} flash message that survives a re-render */
+
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
   const p=new URLSearchParams(window.location.search);
@@ -1053,6 +1064,7 @@ function render(){
   else if(VIEW==="create") {root.innerHTML=renderCreatePool(); bindCreatePool();}
   else if(VIEW==="join")   {root.innerHTML=renderJoin();       bindJoin();}
   else if(VIEW==="login")  {root.innerHTML=renderLogin();      bindLogin();}
+  else if(VIEW==="super"&&SA_GLOBAL){root.innerHTML=renderGlobalResults(); bindGlobalResults();}
   else if(VIEW==="super")  {root.innerHTML=renderSuperAdmin(); bindSuperAdmin();}
   else                     {root.innerHTML=renderMain();       bindMain();}
 }
@@ -1282,7 +1294,10 @@ function renderSuperAdmin(){
       '<span style="flex:1"></span>'+
       '<button class="logout-btn" id="saLogout">Exit</button>'+
     '</div>'+
-    '<button class="btn btn-outline" id="saRefresh" style="margin-bottom:12px;width:auto;padding:7px 16px;font-size:13px">&#8635; Refresh pools</button>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
+      '<button class="btn btn-navy" id="saGlobalResults" style="width:auto;padding:8px 16px;font-size:13px">&#9917; Global Results</button>'+
+      '<button class="btn btn-outline" id="saRefresh" style="width:auto;padding:7px 16px;font-size:13px">&#8635; Refresh pools</button>'+
+    '</div>'+
     '<div id="saPoolList"><div style="color:var(--muted);font-size:13px;padding:10px 0">Loading pools...</div></div>'+
   '</div>';
 }
@@ -1434,6 +1449,334 @@ function bindSuperAdmin(){
   renderPoolList();
   const refreshBtn=document.getElementById("saRefresh");
   if(refreshBtn) refreshBtn.onclick=renderPoolList;
+
+  const globalBtn=document.getElementById("saGlobalResults");
+  if(globalBtn) globalBtn.onclick=()=>openGlobalResults(globalBtn);
+}
+
+/* Open the Global Results screen: detach any per-pool listener, load every
+   pool, seed GLOBAL_RESULTS from the union of their results, then render. */
+function openGlobalResults(btn){
+  GLOBAL_MSG=null;
+  if(btn){btn.disabled=true;btn.textContent="Loading...";}
+  // Detach any stale per-pool realtime listener so it can't fire setTab() here.
+  if(_updateListener&&CURRENT_POOL_CODE&&db){
+    db.ref("pools/"+CURRENT_POOL_CODE).off("value",_updateListener);
+    _updateListener=null;
+  }
+  loadAllPools((err,pools)=>{
+    if(err){ showConfirmModal("Error loading pools: "+err,()=>{}); if(btn){btn.disabled=false;btn.innerHTML="&#9917; Global Results";} return; }
+    pools=pools||[];
+    GLOBAL_POOLS=pools.map(p=>({code:p.code,name:p.name,players:Object.keys(p.users||{}).filter(k=>k!=="u_superadmin").length}));
+    // Seed working copy from the union of all pools' results. Since results are
+    // meant to be identical across pools (kept in sync via global push), taking
+    // the first non-empty value per match key reflects the canonical result.
+    const merged={group:{},ko:{},koMatches:{}};
+    pools.forEach(p=>{
+      const r=normResults(p.results);
+      Object.keys(r.group).forEach(k=>{ if(merged.group[k]===undefined) merged.group[k]=r.group[k]; });
+      Object.keys(r.ko).forEach(k=>{ if(merged.ko[k]===undefined) merged.ko[k]=r.ko[k]; });
+      Object.keys(r.koMatches).forEach(rnd=>{
+        if(!merged.koMatches[rnd]) merged.koMatches[rnd]=[];
+        const arr=r.koMatches[rnd]||[];
+        arr.forEach((m,i)=>{ if(m&&!merged.koMatches[rnd][i]) merged.koMatches[rnd][i]=m; });
+      });
+    });
+    GLOBAL_RESULTS=merged;
+    // Point ST.results at the working copy so shared helpers (actualStandings,
+    // cascade) read it. Stash the real one to restore on exit.
+    GLOBAL_SAVED_RESULTS=ST.results;
+    ST.results=GLOBAL_RESULTS;
+    SA_GLOBAL=true;
+    render();
+  });
+}
+
+/* Leave the Global Results screen and return to the pool list. */
+function closeGlobalResults(){
+  SA_GLOBAL=false; GLOBAL_MSG=null;
+  if(GLOBAL_SAVED_RESULTS){ ST.results=GLOBAL_SAVED_RESULTS; GLOBAL_SAVED_RESULTS=null; }
+  render();
+}
+
+/* Cascade of knockout matchups derived from GLOBAL_RESULTS (ST.results while on
+   the global screen). Mirrors the per-pool admin bracket cascade. */
+function getGlobalCascade(){
+  const cascade={r32:{},r16:{},qf:{},sf:{},final:{}};
+  const actS=actualStandings();
+  for(let i=0;i<16;i++){
+    const m=(ST.results.koMatches.r32&&ST.results.koMatches.r32[i])||null;
+    if(m&&m.home&&m.away){ cascade.r32[i]={home:m.home,away:m.away}; }
+    else if(actS){
+      const seed=R32_SEEDS[i];
+      if(seed&&seed.a.t!=='T3'&&seed.b.t!=='T3'){
+        const ta=slotTeam(seed.a,actS), tb=slotTeam(seed.b,actS);
+        if(ta&&tb) cascade.r32[i]={home:ta,away:tb};
+      }
+    }
+  }
+  [[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]].forEach(function([x,y],i){
+    const m=(ST.results.koMatches.r16&&ST.results.koMatches.r16[i])||null;
+    if(m&&m.home&&m.away){ cascade.r16[i]={home:m.home,away:m.away}; }
+    else { const ta=ST.results.ko['r32_'+x]||null, tb=ST.results.ko['r32_'+y]||null; if(ta||tb) cascade.r16[i]={home:ta||'TBD',away:tb||'TBD',derived:true}; }
+  });
+  [[0,1],[2,3],[4,5],[6,7]].forEach(function([x,y],i){
+    const m=(ST.results.koMatches.qf&&ST.results.koMatches.qf[i])||null;
+    if(m&&m.home&&m.away){ cascade.qf[i]={home:m.home,away:m.away}; }
+    else { const ta=ST.results.ko['r16_'+x]||null, tb=ST.results.ko['r16_'+y]||null; if(ta||tb) cascade.qf[i]={home:ta||'TBD',away:tb||'TBD',derived:true}; }
+  });
+  [[0,1],[2,3]].forEach(function([x,y],i){
+    const m=(ST.results.koMatches.sf&&ST.results.koMatches.sf[i])||null;
+    if(m&&m.home&&m.away){ cascade.sf[i]={home:m.home,away:m.away}; }
+    else { const ta=ST.results.ko['qf_'+x]||null, tb=ST.results.ko['qf_'+y]||null; if(ta||tb) cascade.sf[i]={home:ta||'TBD',away:tb||'TBD',derived:true}; }
+  });
+  const mf=(ST.results.koMatches.final&&ST.results.koMatches.final[0])||null;
+  if(mf&&mf.home&&mf.away){ cascade.final[0]={home:mf.home,away:mf.away}; }
+  else { const ta=ST.results.ko['sf_0']||null, tb=ST.results.ko['sf_1']||null; if(ta||tb) cascade.final[0]={home:ta||'TBD',away:tb||'TBD',derived:true}; }
+  return cascade;
+}
+
+function renderGlobalResults(){
+  const poolCount=GLOBAL_POOLS.length;
+  const playerCount=GLOBAL_POOLS.reduce((s,p)=>s+(p.players||0),0);
+  let html='<div style="padding:16px">'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+      '<button class="btn-sm" id="grBack">&#8592; Back to pools</button>'+
+      '<div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--fifa-blue)">&#9917; Global Results</div>'+
+    '</div>'+
+    '<div class="notice-blue" style="margin-bottom:12px">'+
+      'Enter a result once and push it to <strong>all '+poolCount+' pool'+(poolCount!==1?'s':'')+'</strong> ('+playerCount+' player'+(playerCount!==1?'s':'')+') at once. '+
+      'A push writes only that match result to every pool — it never touches anyone&#39;s picks.'+
+    '</div>'+
+    '<button class="btn btn-green" id="grPushAll" style="margin-bottom:14px;width:auto;padding:9px 18px;font-size:13px">&#11014; Push ALL entered results to all pools</button>';
+
+  // ── Group stage ──────────────────────────────────────────────
+  html+='<div class="card"><div class="card-title">Group stage results</div>'+
+    '<div class="notice">Set winner/draw + goals, then push. Goals feed 3rd-place tiebreakers.</div>'+
+    '<div class="group-grid">';
+  for(const g in GM){
+    html+='<div class="g-card"><div class="g-label">Group '+g+'</div>';
+    for(const m of GM[g]){
+      const raw=ST.results.group[m.id]||{};
+      const r=typeof raw==="object"?raw.result||"":raw;
+      const hg=typeof raw==="object"?(raw.hg!=null?raw.hg:""):"";
+      const ag=typeof raw==="object"?(raw.ag!=null?raw.ag:""):"";
+      const chip=r?'<span style="font-size:10px;color:var(--green);font-weight:600">&#9679; entered</span>':'<span style="font-size:10px;color:var(--muted)">not set</span>';
+      html+='<div style="margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid var(--border)">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:5px;display:flex;justify-content:space-between;gap:6px"><span>'+m.home+' vs '+m.away+'</span>'+chip+'</div>'+
+        '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">'+
+          '<select data-ggr="'+m.id+'" class="asel" style="flex:0 0 auto">'+
+            '<option value="">–</option>'+
+            '<option value="W"'+(r==="W"?" selected":"")+'>&#127942; '+m.home+' W</option>'+
+            '<option value="D"'+(r==="D"?" selected":"")+'>&#9866; Draw</option>'+
+            '<option value="L"'+(r==="L"?" selected":"")+'>&#127942; '+m.away+' W</option>'+
+          '</select>'+
+          '<input type="number" min="0" max="20" placeholder="'+m.home+' goals" value="'+hg+'" data-ggrg="'+m.id+'" data-side="h" style="width:74px;margin:0;padding:5px 6px;font-size:12px"/>'+
+          '<span style="font-size:12px;color:var(--muted)">–</span>'+
+          '<input type="number" min="0" max="20" placeholder="'+m.away+' goals" value="'+ag+'" data-ggrg="'+m.id+'" data-side="a" style="width:74px;margin:0;padding:5px 6px;font-size:12px"/>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px;margin-top:6px">'+
+          '<button class="btn-sm" data-gpush-group="'+m.id+'">&#11014; Push</button>'+
+          (r?'<button class="btn-sm btn-danger" data-gclear-group="'+m.id+'">&#10005; Clear</button>':'')+
+        '</div>'+
+      '</div>';
+    }
+    html+='</div>';
+  }
+  html+='</div></div>';
+
+  // ── Knockout ─────────────────────────────────────────────────
+  const cascade=getGlobalCascade();
+  const koRounds=[{id:'r32',label:'Round of 32',slots:16},{id:'r16',label:'Round of 16',slots:8},{id:'qf',label:'Quarterfinals',slots:4},{id:'sf',label:'Semifinals',slots:2},{id:'final',label:'Final',slots:1}];
+  html+='<div class="card"><div class="card-title">Knockout results</div>'+
+    '<div class="notice">Pick the winner of each match, then push. Matchups cascade from earlier rounds.</div>';
+  koRounds.forEach(function(rd){
+    html+='<div style="margin-top:10px"><div style="font-weight:700;font-size:13px;color:var(--fifa-blue);margin-bottom:6px">'+rd.label+'</div>';
+    for(let i=0;i<rd.slots;i++){
+      const key=rd.id+'_'+i;
+      const m=cascade[rd.id][i]||null;
+      const hw=m?m.home:''; const aw=m?m.away:'';
+      const res=ST.results.ko[key]||"";
+      const known=(hw&&hw!=='TBD')||(aw&&aw!=='TBD');
+      const chip=res?'<span style="font-size:10px;color:var(--green);font-weight:600">&#9679; '+res+'</span>':'';
+      if(!known){
+        html+='<div style="font-size:11px;color:var(--muted);padding:5px 0;border-bottom:1px solid var(--border)">'+rd.label+' #'+(i+1)+' — <em>awaiting earlier results</em></div>';
+        continue;
+      }
+      html+='<div style="margin-bottom:9px;padding-bottom:7px;border-bottom:1px solid var(--border)">'+
+        '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;display:flex;justify-content:space-between;gap:6px"><span>'+(hw||'TBD')+' vs '+(aw||'TBD')+'</span>'+chip+'</div>'+
+        '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">'+
+          '<select data-gko="'+key+'" class="asel" style="flex:0 0 auto">'+
+            '<option value="">– winner –</option>'+
+            (hw&&hw!=='TBD'?'<option value="'+hw+'"'+(res===hw?" selected":"")+'>&#127942; '+hw+'</option>':'')+
+            (aw&&aw!=='TBD'?'<option value="'+aw+'"'+(res===aw?" selected":"")+'>&#127942; '+aw+'</option>':'')+
+          '</select>'+
+          '<button class="btn-sm" data-gpush-ko="'+key+'">&#11014; Push</button>'+
+          (res?'<button class="btn-sm btn-danger" data-gclear-ko="'+key+'">&#10005; Clear</button>':'')+
+        '</div>'+
+      '</div>';
+    }
+    html+='</div>';
+  });
+  html+='</div>';
+
+  const msgHtml=GLOBAL_MSG?'<div style="color:'+(GLOBAL_MSG.ok?'var(--green)':'var(--red)')+'">'+GLOBAL_MSG.text+'</div>':'';
+  html+='<div id="grMsg" style="margin-top:6px;font-size:13px">'+msgHtml+'</div>';
+  html+='</div>';
+  return html;
+}
+
+/* Push a single match result to EVERY pool's results node. type:"group"|"ko".
+   value=null clears (removes) that key. Writes ONLY the specific result path —
+   never user/pick/settings data. Calls cb(err,poolCount). */
+function pushResultToAllPools(type,key,value,cb){
+  if(!db){ cb&&cb("Firebase not initialized"); return; }
+  db.ref("pools").once("value").then(snap=>{
+    const pools=snap.val()||{};
+    const codes=Object.keys(pools);
+    const updates={};
+    codes.forEach(code=>{ updates["pools/"+code+"/results/"+type+"/"+key]=value; });
+    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
+  }).catch(e=>cb&&cb(e.message));
+}
+
+/* Push every entered group + ko result to all pools in one atomic update. */
+function pushAllResultsToAllPools(cb){
+  if(!db){ cb&&cb("Firebase not initialized"); return; }
+  db.ref("pools").once("value").then(snap=>{
+    const pools=snap.val()||{};
+    const codes=Object.keys(pools);
+    const updates={};
+    codes.forEach(code=>{
+      Object.keys(ST.results.group).forEach(k=>{ updates["pools/"+code+"/results/group/"+k]=ST.results.group[k]; });
+      Object.keys(ST.results.ko).forEach(k=>{ updates["pools/"+code+"/results/ko/"+k]=ST.results.ko[k]; });
+    });
+    if(!Object.keys(updates).length){ cb&&cb(null,0,0); return; }
+    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length,Object.keys(ST.results.group).length+Object.keys(ST.results.ko).length));
+  }).catch(e=>cb&&cb(e.message));
+}
+
+function bindGlobalResults(){
+  const back=document.getElementById("grBack");
+  if(back) back.onclick=closeGlobalResults;
+  const setMsg=(t,ok)=>{
+    GLOBAL_MSG={text:t,ok:ok};
+    const msgEl=document.getElementById("grMsg");
+    if(msgEl){ msgEl.style.color=ok?"var(--green)":"var(--red)"; msgEl.textContent=t; }
+  };
+  const poolCount=GLOBAL_POOLS.length;
+  const playerCount=GLOBAL_POOLS.reduce((s,p)=>s+(p.players||0),0);
+
+  // Group selectors / goals — mutate the working copy only (push is explicit).
+  document.querySelectorAll("[data-ggr]").forEach(sel=>{
+    sel.onchange=()=>{
+      const mid=sel.dataset.ggr;
+      if(sel.value){
+        const ex=ST.results.group[mid];
+        if(ex&&typeof ex==="object"){ ex.result=sel.value; ST.results.group[mid]=ex; }
+        else ST.results.group[mid]={result:sel.value,hg:"",ag:""};
+      } else delete ST.results.group[mid];
+    };
+  });
+  document.querySelectorAll("[data-ggrg]").forEach(inp=>{
+    inp.oninput=()=>{
+      const mid=inp.dataset.ggrg, side=inp.dataset.side;
+      if(!ST.results.group[mid]||typeof ST.results.group[mid]==="string"){
+        const old=ST.results.group[mid]||""; ST.results.group[mid]={result:old,hg:"",ag:""};
+      }
+      const val=inp.value===""?"":parseInt(inp.value)||0;
+      if(side==="h") ST.results.group[mid].hg=val; else ST.results.group[mid].ag=val;
+    };
+  });
+  // KO winner selectors.
+  document.querySelectorAll("[data-gko]").forEach(sel=>{
+    sel.onchange=()=>{
+      const key=sel.dataset.gko;
+      if(sel.value) ST.results.ko[key]=sel.value; else delete ST.results.ko[key];
+    };
+  });
+
+  // Per-match push (group)
+  document.querySelectorAll("[data-gpush-group]").forEach(btn=>{
+    btn.onclick=()=>{
+      const mid=btn.dataset.gpushGroup;
+      const val=ST.results.group[mid];
+      if(!val||(typeof val==="object"&&!val.result)){ setMsg("Set a result for this match first.",false); return; }
+      const gm=findGM(mid);
+      const label=gm?gm.home+" vs "+gm.away:mid;
+      showConfirmModal('Push "'+label+'" result to all '+poolCount+' pools? This updates results for all '+playerCount+' players.',()=>{
+        btn.disabled=true; btn.textContent="Pushing...";
+        pushResultToAllPools("group",mid,val,(err,n)=>{
+          if(err){ setMsg("Push failed: "+err,false); btn.disabled=false; btn.innerHTML="&#11014; Push"; return; }
+          setMsg("✓ Pushed "+label+" to "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
+    };
+  });
+  // Per-match clear (group)
+  document.querySelectorAll("[data-gclear-group]").forEach(btn=>{
+    btn.onclick=()=>{
+      const mid=btn.dataset.gclearGroup;
+      const gm=findGM(mid); const label=gm?gm.home+" vs "+gm.away:mid;
+      showConfirmModal('Clear "'+label+'" result from all '+poolCount+' pools?',()=>{
+        pushResultToAllPools("group",mid,null,(err,n)=>{
+          if(err){ setMsg("Clear failed: "+err,false); return; }
+          delete ST.results.group[mid];
+          setMsg("✓ Cleared "+label+" from "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
+    };
+  });
+  // Per-match push (ko)
+  document.querySelectorAll("[data-gpush-ko]").forEach(btn=>{
+    btn.onclick=()=>{
+      const key=btn.dataset.gpushKo;
+      const val=ST.results.ko[key];
+      if(!val){ setMsg("Pick the winner for this match first.",false); return; }
+      showConfirmModal('Push "'+val+'" (winner) to all '+poolCount+' pools? This updates results for all '+playerCount+' players.',()=>{
+        btn.disabled=true; btn.textContent="Pushing...";
+        pushResultToAllPools("ko",key,val,(err,n)=>{
+          if(err){ setMsg("Push failed: "+err,false); btn.disabled=false; btn.innerHTML="&#11014; Push"; return; }
+          setMsg("✓ Pushed winner "+val+" to "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
+    };
+  });
+  // Per-match clear (ko)
+  document.querySelectorAll("[data-gclear-ko]").forEach(btn=>{
+    btn.onclick=()=>{
+      const key=btn.dataset.gclearKo;
+      showConfirmModal('Clear this knockout result from all '+poolCount+' pools?',()=>{
+        pushResultToAllPools("ko",key,null,(err,n)=>{
+          if(err){ setMsg("Clear failed: "+err,false); return; }
+          delete ST.results.ko[key];
+          setMsg("✓ Cleared knockout result from "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
+    };
+  });
+
+  // Bulk push-all
+  const pushAll=document.getElementById("grPushAll");
+  if(pushAll) pushAll.onclick=()=>{
+    const nG=Object.keys(ST.results.group).filter(k=>{const v=ST.results.group[k];return v&&(typeof v!=="object"||v.result);}).length;
+    const nK=Object.keys(ST.results.ko).length;
+    if(!nG&&!nK){ setMsg("No results entered yet.",false); return; }
+    showConfirmModal('Push all '+(nG+nK)+' entered result'+((nG+nK)!==1?'s':'')+' to all '+poolCount+' pools? This updates results for all '+playerCount+' players.',()=>{
+      pushAll.disabled=true; pushAll.textContent="Pushing...";
+      pushAllResultsToAllPools((err,n,cnt)=>{
+        if(err){ setMsg("Push failed: "+err,false); pushAll.disabled=false; pushAll.innerHTML="&#11014; Push ALL entered results to all pools"; return; }
+        setMsg("✓ Pushed "+cnt+" result"+(cnt!==1?"s":"")+" to "+n+" pool"+(n!==1?"s":"")+".",true); render();
+      });
+    });
+  };
+}
+
+/* Find a group match descriptor by its match id (e.g. "A_0_1"). */
+function findGM(mid){
+  const g=mid.split("_")[0];
+  if(!GM[g]) return null;
+  return GM[g].find(m=>m.id===mid)||null;
 }
 
 

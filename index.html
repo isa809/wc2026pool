@@ -602,6 +602,7 @@ let MOVE_SELECTED=null;
 let MOVE_FROM=null;
 let MOVE_TO=null;
 let MOVE_COMMENTARY="";
+let MOVE_OPP_LINE="";
 let MOVE_SORT="movers";
 
 /* Optional super-admin announcement banners. GLOBAL_ANNOUNCEMENT is the
@@ -2065,6 +2066,160 @@ function renderTodayMatches(){
   return html;
 }
 
+/* ---- Stage 2: Opportunity / swing scenarios (READ-ONLY) ---- */
+
+/* Ordinal: 1->1st, 2->2nd, 3->3rd, 4->4th, 11->11th, 21->21st. */
+function moveOrd(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+
+/* Current standings using full results (calcScore). Super admins excluded. */
+function moveCurrentStandings(){
+  return Object.entries(ST.users)
+    .filter(([k,u])=>!isSuperAdminEntry(k,u))
+    .map(([k,u])=>({key:k,name:u.displayName||k,score:calcScore(k)}))
+    .sort((a,b)=>b.score-a.score)
+    .map((s,i)=>({...s,rank:i+1}));
+}
+
+/* Points a player's pick would earn for one match under a HYPOTHETICAL outcome.
+   Mirrors calcScore EXACTLY (group: correct=groupCorrect, correct draw=groupDraw,
+   wrong=groupWrong; KO: base+bonus on a hit, 0 otherwise; no pick = 0).
+   outcome: group -> "W"|"D"|"L"; ko -> the advancing team name. */
+function moveHypoPoints(picks,it,outcome){
+  if(it.kind==="group"){
+    const p=picks.group[it.id];
+    if(!p) return 0;
+    return p===outcome ? (outcome==="D"?SC.groupDraw:SC.groupCorrect) : SC.groupWrong;
+  }
+  const key=it.rid+"_"+it.i;
+  const pObj=picks.ko[key];
+  if(!pObj) return 0;
+  let team=pObj.team;
+  if(team==="__t3__") team=picks.ko[key+"_t3"]||null;
+  if(!team) return 0;
+  const sc=SC.ko[it.rid];
+  if(!sc) return 0;
+  return team===outcome ? sc.base+(sc.bonus[(pObj.round||1)-1]||0) : 0;
+}
+
+/* Possible outcomes for one upcoming match. Group -> W/D/L; KO -> each
+   non-TBD team advancing. {o:<scoring key>}. */
+function moveMatchOutcomes(it){
+  if(it.kind==="group") return [{o:"W"},{o:"D"},{o:"L"}];
+  const info=moveMatchInfo(it);
+  const outs=[];
+  if(info.home&&info.home!=="TBD") outs.push({o:info.home});
+  if(info.away&&info.away!=="TBD") outs.push({o:info.away});
+  return outs;
+}
+
+/* Readable description of an outcome, e.g. "Norway beat Iraq" / "Mexico and
+   South Africa draw" / "Brazil beat Morocco". */
+function moveOutcomePhrase(it,outcome){
+  const info=moveMatchInfo(it);
+  if(it.kind==="group"){
+    if(outcome==="W") return info.home+" beat "+info.away;
+    if(outcome==="L") return info.away+" beat "+info.home;
+    return info.home+" and "+info.away+" draw";
+  }
+  const other=outcome===info.home?info.away:info.home;
+  return (other&&other!=="TBD") ? outcome+" beat "+other : outcome+" advance";
+}
+
+/* What a player picked on a match, as a readable label ("no pick" if none). */
+function movePickName(picks,it){
+  if(it.kind==="group"){
+    const p=picks.group[it.id];
+    if(!p) return "no pick";
+    const info=moveMatchInfo(it);
+    return p==="W"?info.home:p==="D"?"Draw":info.away;
+  }
+  const key=it.rid+"_"+it.i;
+  const pObj=picks.ko[key];
+  let team=pObj?pObj.team:null;
+  if(team==="__t3__") team=picks.ko[key+"_t3"]||null;
+  return team||"no pick";
+}
+
+/* The "Opportunities today" card: pairwise, single-match swing scenarios for
+   the next unplayed matchday. Returns "" when there's nothing upcoming. */
+function renderOpportunities(){
+  MOVE_OPP_LINE="";
+  const day=moveNextUnplayedDay();
+  if(!day) return "";
+  const matches=day.items.filter(it=>
+    it.kind==="group" ? !ST.results.group[it.id] : !ST.results.ko[it.rid+"_"+it.i]
+  );
+  if(!matches.length) return "";
+  const standings=moveCurrentStandings();
+  if(standings.length<2) return "";
+  const picksBy={}; standings.forEach(s=>picksBy[s.key]=getMergedPicks(s.key));
+
+  // Close pairs: B ahead of (or level with) A. Always include adjacent pairs;
+  // also any pair within THRESH points. gap = B.score - A.score >= 0.
+  const THRESH=6, pairs=[];
+  for(let i=0;i<standings.length;i++){
+    for(let j=i+1;j<standings.length;j++){
+      const B=standings[i],A=standings[j],gap=B.score-A.score;
+      if(j===i+1 || gap<=THRESH) pairs.push({A,B,gap});
+    }
+  }
+  pairs.sort((p,q)=>p.gap-q.gap||p.A.rank-q.A.rank);
+  const SHOWN=pairs.slice(0,8);
+
+  let best=null,blocks="";
+  SHOWN.forEach(pr=>{
+    const {A,B,gap}=pr;
+    // Single-match levers: an outcome where (B_delta - A_delta) closes the gap.
+    const levers=[];
+    matches.forEach(it=>{
+      moveMatchOutcomes(it).forEach(out=>{
+        const aD=moveHypoPoints(picksBy[A.key],it,out.o);
+        const bD=moveHypoPoints(picksBy[B.key],it,out.o);
+        const newGap=gap+(bD-aD);
+        if(newGap<=0 && newGap<gap){
+          levers.push({it,o:out.o,newGap,aPick:movePickName(picksBy[A.key],it),bPick:movePickName(picksBy[B.key],it)});
+        }
+      });
+    });
+    levers.sort((x,y)=>x.newGap-y.newGap);
+    const top=levers.slice(0,4);
+
+    blocks+='<div style="padding:8px 0;border-top:1px solid var(--border)">'+
+      '<div style="font-size:12px;font-weight:700">'+A.name+' ('+moveOrd(A.rank)+', '+A.score+' pts) &#8594; '+
+        B.name+' ('+moveOrd(B.rank)+', '+B.score+' pts), '+(gap===0?'level':gap+' back')+'</div>';
+    if(top.length){
+      blocks+='<div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">';
+      top.forEach(l=>{
+        const verb=l.newGap===0?'Ties '+B.name:'Passes '+B.name;
+        blocks+='<div style="font-size:12px;line-height:1.4;color:var(--navy)">&#8226; '+verb+' if '+moveOutcomePhrase(l.it,l.o)+
+          ' <span style="color:var(--muted)">('+A.name+': '+l.aPick+', '+B.name+': '+l.bPick+')</span></div>';
+      });
+      blocks+='</div>';
+      // Commentary uses the closest pair with a lever; prefer a clean tie.
+      if(!best){ const tie=top.find(l=>l.newGap===0); best={A,B,l:tie||top[0]}; }
+    } else {
+      blocks+='<div style="font-size:12px;color:var(--muted);margin-top:4px">&#8226; No single result closes it today'+
+        (gap>0?' — would need multiple results to go '+A.name+'’s way':'')+'</div>';
+    }
+    blocks+='</div>';
+  });
+
+  let html='<div class="card" style="margin-top:12px">'+
+    '<div class="card-title">&#128161; Opportunities today</div>'+
+    '<div style="font-size:12px;color:var(--muted);margin:-4px 0 4px">How today’s unplayed matches could shift the closest gaps. Single-match levers only — exact scoring.</div>'+
+    blocks;
+  if(best){
+    const verb=best.l.newGap===0?'tie':'pass';
+    MOVE_OPP_LINE='🔥 Today’s big one: '+best.A.name+' can '+verb+' '+best.B.name+' for '+moveOrd(best.B.rank)+
+      ' if '+moveOutcomePhrase(best.l.it,best.l.o)+'. Everything to play for.';
+    html+='<div id="mvOppLine" style="margin-top:10px;background:var(--bg);padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.5">'+MOVE_OPP_LINE+'</div>'+
+      '<button class="btn btn-outline" id="mvOppCopy" style="margin-top:8px;width:auto;padding:7px 16px;font-size:13px">&#128203; Copy</button>'+
+      '<span id="mvOppCopyMsg" style="font-size:12px;color:var(--green);margin-left:10px"></span>';
+  }
+  html+='</div>';
+  return html;
+}
+
 function openMovement(btn){
   if(btn){btn.disabled=true;btn.textContent="Loading...";}
   if(_updateListener&&CURRENT_POOL_CODE&&db){
@@ -2122,9 +2277,9 @@ function renderMovement(){
     '<div id="mvAnnounceStatus" style="font-size:12px;color:#185fa5;margin-top:6px"></div>'+
   '</div>';
 
-  // "Today's matches" is independent of the From/To comparison, so build it once
-  // and show it in every branch where a pool is selected (below the table).
-  const todayHtml=renderTodayMatches();
+  // "Today's matches" + "Opportunities" are independent of the From/To
+  // comparison, so build them once and show in every pool-selected branch.
+  const todayHtml=renderTodayMatches()+renderOpportunities();
 
   const days=moveResultDays();
   if(days.length<2){
@@ -2330,6 +2485,12 @@ function bindMovement(){
   if(copy) copy.onclick=()=>{
     const done=()=>{ const m=document.getElementById("mvCopyMsg"); if(m){ m.textContent="✓ Copied!"; setTimeout(()=>{ if(m) m.textContent=""; },2000); } };
     if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(MOVE_COMMENTARY).then(done).catch(done);
+    else done();
+  };
+  const oppCopy=document.getElementById("mvOppCopy");
+  if(oppCopy) oppCopy.onclick=()=>{
+    const done=()=>{ const m=document.getElementById("mvOppCopyMsg"); if(m){ m.textContent="✓ Copied!"; setTimeout(()=>{ if(m) m.textContent=""; },2000); } };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(MOVE_OPP_LINE).then(done).catch(done);
     else done();
   };
 

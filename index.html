@@ -592,6 +592,17 @@ let SUBMIT_POOLS=[];
 let SUBMIT_SELECTED=null;
 let SUBMIT_SORT="name";
 
+/* Super-admin "Movement Analysis" screen (read-only historical replay).
+   SA_MOVE toggles it within the VIEW="super" route. Works on one pool at a
+   time. MOVE_FROM/MOVE_TO are date sort-keys; MOVE_COMMENTARY holds the
+   generated shareable text for the copy button. */
+let SA_MOVE=false;
+let MOVE_POOLS=[];
+let MOVE_SELECTED=null;
+let MOVE_FROM=null;
+let MOVE_TO=null;
+let MOVE_COMMENTARY="";
+
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
   const p=new URLSearchParams(window.location.search);
@@ -1075,6 +1086,7 @@ function render(){
   else if(VIEW==="login")  {root.innerHTML=renderLogin();      bindLogin();}
   else if(VIEW==="super"&&SA_GLOBAL){root.innerHTML=renderGlobalResults(); bindGlobalResults();}
   else if(VIEW==="super"&&SA_SUBMIT){root.innerHTML=renderSubmitTimes(); bindSubmitTimes();}
+  else if(VIEW==="super"&&SA_MOVE){root.innerHTML=renderMovement(); bindMovement();}
   else if(VIEW==="super")  {root.innerHTML=renderSuperAdmin(); bindSuperAdmin();}
   else                     {root.innerHTML=renderMain();       bindMain();}
 }
@@ -1332,6 +1344,7 @@ function renderSuperAdmin(){
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
       '<button class="btn btn-navy" id="saGlobalResults" style="width:auto;padding:8px 16px;font-size:13px">&#9917; Global Results</button>'+
       '<button class="btn btn-navy" id="saSubmitTimes" style="width:auto;padding:8px 16px;font-size:13px">&#128340; Submission Times</button>'+
+      '<button class="btn btn-navy" id="saMovement" style="width:auto;padding:8px 16px;font-size:13px">&#128202; Movement</button>'+
       '<button class="btn btn-outline" id="saRefresh" style="width:auto;padding:7px 16px;font-size:13px">&#8635; Refresh pools</button>'+
     '</div>'+
     '<div id="saPoolList"><div style="color:var(--muted);font-size:13px;padding:10px 0">Loading pools...</div></div>'+
@@ -1522,6 +1535,9 @@ function bindSuperAdmin(){
 
   const submitBtn=document.getElementById("saSubmitTimes");
   if(submitBtn) submitBtn.onclick=()=>openSubmitTimes(submitBtn);
+
+  const moveBtn=document.getElementById("saMovement");
+  if(moveBtn) moveBtn.onclick=()=>openMovement(moveBtn);
 }
 
 /* Open the Global Results screen: detach any per-pool listener, load every
@@ -1738,6 +1754,317 @@ function bindSubmitTimes(){
   if(poolSel) poolSel.onchange=()=>{ SUBMIT_SELECTED=poolSel.value; render(); };
   const sortSel=document.getElementById("stSort");
   if(sortSel) sortSel.onchange=()=>{ SUBMIT_SORT=sortSel.value; render(); };
+}
+
+/* ══ MOVEMENT ANALYSIS (super admin, READ-ONLY) ══
+   Replays the tournament: standings "as of date X" are computed by temporarily
+   filtering ST.results to matches on/before X, running calcScore, then ALWAYS
+   restoring ST.results. Reuses calcScore/getMergedPicks/SC — no scoring changes. */
+
+const MOVE_KO_DATES={r32:Date.UTC(2026,5,28),r16:Date.UTC(2026,6,4),qf:Date.UTC(2026,6,9),sf:Date.UTC(2026,6,14),final:Date.UTC(2026,6,19)};
+const MOVE_KO_LABEL={r32:"Round of 32 · Jun 28",r16:"Round of 16 · Jul 4",qf:"Quarterfinals · Jul 9",sf:"Semifinals · Jul 14",final:"Final · Jul 19"};
+
+/* UTC sort key (the match's day) for a result key. */
+function matchDateKey(resultKey,isKo){
+  if(isKo){
+    const rnd=resultKey.split("_")[0];
+    return MOVE_KO_DATES[rnd]||0;
+  }
+  for(const day of GROUP_SCHED){
+    for(const row of day.m){
+      const arr=GROUPS[row[1]]; if(!arr) continue;
+      const i=arr.indexOf(row[2]), j=arr.indexOf(row[3]);
+      if(i<0||j<0) continue;
+      const id=row[1]+"_"+Math.min(i,j)+"_"+Math.max(i,j);
+      if(id===resultKey) return day.s;
+    }
+  }
+  return 0;
+}
+
+/* Standings (ranked) using only results on/before cutoffDateKey. Self-reverting. */
+function standingsAsOf(cutoffDateKey){
+  const fullResults=ST.results;
+  let standings=[];
+  try{
+    const filtered={group:{},ko:{},koMatches:fullResults.koMatches||{}};
+    Object.keys(fullResults.group||{}).forEach(k=>{
+      if(matchDateKey(k,false)<=cutoffDateKey) filtered.group[k]=fullResults.group[k];
+    });
+    Object.keys(fullResults.ko||{}).forEach(k=>{
+      if(k.endsWith("_t3")){ filtered.ko[k]=fullResults.ko[k]; return; }
+      if(matchDateKey(k,true)<=cutoffDateKey) filtered.ko[k]=fullResults.ko[k];
+    });
+    ST.results=filtered;
+    standings=Object.entries(ST.users)
+      .filter(([k,u])=>!isSuperAdminEntry(k,u))
+      .map(([k,u])=>({key:k,name:u.displayName||k,score:calcScore(k)}))
+      .sort((a,b)=>b.score-a.score)
+      .map((s,i)=>({...s,rank:i+1}));
+  } finally {
+    ST.results=fullResults; // ALWAYS restore
+  }
+  return standings;
+}
+
+/* Days (sort-key + label) that have at least one entered result. */
+function moveResultDays(){
+  const seen={};
+  Object.keys(ST.results.group||{}).forEach(k=>{
+    const d=matchDateKey(k,false);
+    if(d){ const day=GROUP_SCHED.find(x=>x.s===d); seen[d]=day?day.d:"Group stage"; }
+  });
+  Object.keys(ST.results.ko||{}).forEach(k=>{
+    if(k.endsWith("_t3")) return;
+    const d=matchDateKey(k,true);
+    if(d){ seen[d]=MOVE_KO_LABEL[k.split("_")[0]]||"Knockout"; }
+  });
+  return Object.keys(seen).map(Number).sort((a,b)=>a-b).map(d=>({key:d,label:seen[d]}));
+}
+
+/* Individual results that occurred in (from, to]. */
+function moveWindowMatches(from,to){
+  const out=[];
+  Object.keys(ST.results.group||{}).forEach(k=>{ const d=matchDateKey(k,false); if(d>from&&d<=to) out.push({key:k,isKo:false}); });
+  Object.keys(ST.results.ko||{}).forEach(k=>{ if(k.endsWith("_t3")) return; const d=matchDateKey(k,true); if(d>from&&d<=to) out.push({key:k,isKo:true}); });
+  return out;
+}
+
+/* Points a user earned/lost on one match (mirrors calcScore exactly). */
+function movePointsForMatch(picks,m){
+  if(!m.isKo){
+    const raw=ST.results.group[m.key];
+    const res=typeof raw==="object"?raw.result:raw;
+    const p=picks.group[m.key];
+    if(!p||!res) return {picked:!!p,pts:0,outcome:p||null};
+    const pt=p===res?(res==="D"?SC.groupDraw:SC.groupCorrect):SC.groupWrong;
+    return {picked:true,pts:pt,outcome:p,hit:p===res};
+  }
+  const res=ST.results.ko[m.key];
+  const p=picks.ko[m.key];
+  if(!p) return {picked:false,pts:0,outcome:null};
+  let pickedTeam=p.team;
+  if(pickedTeam==="__t3__") pickedTeam=picks.ko[m.key+"_t3"]||null;
+  if(!res) return {picked:!!pickedTeam,pts:0,outcome:pickedTeam};
+  const sc=SC.ko[m.key.split("_")[0]];
+  if(!sc) return {picked:true,pts:0,outcome:pickedTeam};
+  if(pickedTeam&&pickedTeam===res) return {picked:true,pts:sc.base+(sc.bonus[(p.round||1)-1]||0),outcome:pickedTeam,hit:true};
+  return {picked:true,pts:0,outcome:pickedTeam,hit:false};
+}
+
+/* Readable result description for a match key. */
+function moveDescribe(m){
+  if(m.isKo){ const res=ST.results.ko[m.key]; return res?res+" advanced ("+(MOVE_KO_LABEL[m.key.split("_")[0]]||"KO").split(" · ")[0]+")":m.key; }
+  const gm=findGM(m.key); if(!gm) return m.key;
+  const raw=ST.results.group[m.key]; const res=typeof raw==="object"?raw.result:raw;
+  if(res==="W") return gm.home+" beat "+gm.away;
+  if(res==="L") return gm.away+" beat "+gm.home;
+  if(res==="D") return gm.home+" drew "+gm.away;
+  return gm.home+" vs "+gm.away;
+}
+
+function openMovement(btn){
+  if(btn){btn.disabled=true;btn.textContent="Loading...";}
+  if(_updateListener&&CURRENT_POOL_CODE&&db){
+    db.ref("pools/"+CURRENT_POOL_CODE).off("value",_updateListener);
+    _updateListener=null;
+  }
+  loadAllPools((err,pools)=>{
+    if(err){ showConfirmModal("Error loading pools: "+err,()=>{}); if(btn){btn.disabled=false;btn.innerHTML="&#128202; Movement";} return; }
+    MOVE_POOLS=pools||[];
+    if(!MOVE_SELECTED||!MOVE_POOLS.some(p=>p.code===MOVE_SELECTED)){
+      MOVE_SELECTED=MOVE_POOLS.length?MOVE_POOLS[0].code:null;
+    }
+    if(!MOVE_SELECTED){ SA_MOVE=true; render(); return; }
+    moveLoadPoolAndDefaults(MOVE_SELECTED,()=>{ SA_MOVE=true; render(); });
+  });
+}
+
+/* Load a pool's data into ST and set default From/To to the last two result days. */
+function moveLoadPoolAndDefaults(code,cb){
+  loadPool(code,()=>{
+    const days=moveResultDays();
+    MOVE_TO  =days.length?days[days.length-1].key:null;
+    MOVE_FROM=days.length>1?days[days.length-2].key:(days.length?days[0].key:null);
+    cb&&cb();
+  });
+}
+
+function closeMovement(){ SA_MOVE=false; render(); }
+
+function renderMovement(){
+  let html='<div style="padding:16px">'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+      '<button class="btn-sm" id="mvBack">&#8592; Back to pools</button>'+
+      '<div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--fifa-blue)">&#128202; Movement Analysis</div>'+
+    '</div>'+
+    '<div class="notice-blue" style="margin-bottom:12px">Read-only replay — standings are recomputed from picks + results as of each day. Nothing is saved.</div>';
+
+  if(!MOVE_POOLS.length){ html+='<div class="notice-blue">No pools created yet.</div></div>'; return html; }
+
+  // Pool selector
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">'+
+    '<label style="font-size:12px;color:var(--muted)">Pool:</label>'+
+    '<select id="mvPool" class="asel" style="flex:0 0 auto">';
+  MOVE_POOLS.forEach(p=>{ html+='<option value="'+p.code+'"'+(p.code===MOVE_SELECTED?" selected":"")+'>'+p.name+' ('+p.code+')</option>'; });
+  html+='</select></div>';
+
+  const days=moveResultDays();
+  if(days.length<2){
+    html+='<div class="notice'+(days.length?'':'-red')+'">Need at least two days with entered results to compare. This pool has '+days.length+'.</div></div>';
+    return html;
+  }
+  if(MOVE_FROM===null||!days.some(d=>d.key===MOVE_FROM)) MOVE_FROM=days[days.length-2].key;
+  if(MOVE_TO===null||!days.some(d=>d.key===MOVE_TO)) MOVE_TO=days[days.length-1].key;
+
+  // Date selectors
+  const opts=(sel)=>days.map(d=>'<option value="'+d.key+'"'+(d.key===sel?" selected":"")+'>'+d.label+'</option>').join("");
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+    '<label style="font-size:12px;color:var(--muted)">From:</label>'+
+    '<select id="mvFrom" class="asel" style="flex:0 0 auto">'+opts(MOVE_FROM)+'</select>'+
+    '<label style="font-size:12px;color:var(--muted)">To:</label>'+
+    '<select id="mvTo" class="asel" style="flex:0 0 auto">'+opts(MOVE_TO)+'</select>'+
+  '</div>';
+
+  if(MOVE_FROM>=MOVE_TO){
+    html+='<div class="notice-red">"To" must be a later day than "From".</div></div>';
+    return html;
+  }
+
+  // Compute standings at both endpoints
+  const fromS=standingsAsOf(MOVE_FROM), toS=standingsAsOf(MOVE_TO);
+  const fromMap={}; fromS.forEach(s=>fromMap[s.key]=s);
+
+  // Merged picks per player (date-independent)
+  const picksBy={};
+  toS.forEach(s=>{ picksBy[s.key]=getMergedPicks(s.key); });
+
+  // Window matches + per-player attribution
+  const wMatches=moveWindowMatches(MOVE_FROM,MOVE_TO);
+
+  // Differentiating matches: among players who picked, >1 distinct outcome
+  const diff=[];
+  wMatches.forEach(m=>{
+    const outcomes={};
+    toS.forEach(s=>{ const r=movePointsForMatch(picksBy[s.key],m); if(r.picked&&r.outcome!=null) outcomes[r.outcome]=true; });
+    if(Object.keys(outcomes).length>1) diff.push(m);
+  });
+
+  // Build movement rows
+  const rows=toS.map(s=>{
+    const f=fromMap[s.key]||{rank:s.rank,score:s.score};
+    const rankChange=f.rank-s.rank;       // + = climbed
+    const pointsGained=s.score-f.score;
+    const drivers=wMatches.map(m=>({m,r:movePointsForMatch(picksBy[s.key],m)}))
+      .filter(x=>x.r.picked&&x.r.pts!==0)
+      .sort((a,b)=>b.r.pts-a.r.pts);
+    return {key:s.key,name:s.name,fromRank:f.rank,toRank:s.rank,rankChange,pointsGained,drivers};
+  }).sort((a,b)=>{
+    if(Math.abs(b.rankChange)!==Math.abs(a.rankChange)) return Math.abs(b.rankChange)-Math.abs(a.rankChange);
+    return b.pointsGained-a.pointsGained;
+  });
+
+  const changedCount=rows.filter(r=>r.rankChange!==0).length;
+  const lockstep=changedCount===0;
+
+  // Top climber / biggest faller for insight + commentary
+  const climbers=rows.filter(r=>r.rankChange>0).sort((a,b)=>b.rankChange-a.rankChange||b.pointsGained-a.pointsGained);
+  const fallers=rows.filter(r=>r.rankChange<0).sort((a,b)=>a.rankChange-b.rankChange||a.pointsGained-b.pointsGained);
+  const topClimber=climbers[0]||null;
+  const biggestFaller=fallers[0]||null;
+
+  // Insight line
+  const fromLabel=days.find(d=>d.key===MOVE_FROM).label, toLabel=days.find(d=>d.key===MOVE_TO).label;
+  if(lockstep){
+    html+='<div class="notice-green" style="margin-bottom:10px">&#128274; <strong>Lockstep</strong> — everyone moved together, no position changes between '+fromLabel+' and '+toLabel+'. The pack picked alike.</div>';
+  } else {
+    let line='&#9889; <strong>Shake-up</strong> — '+changedCount+' player'+(changedCount!==1?'s':'')+' changed position.';
+    if(diff.length) line+=' Movement was driven by: '+diff.map(m=>moveDescribe(m)+' (pool was split)').join('; ')+'.';
+    html+='<div class="notice-red" style="margin-bottom:10px">'+line+'</div>';
+  }
+
+  // Movement table
+  html+='<div class="card" style="padding:0;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'+
+    '<tr style="background:#f5f5f2;color:var(--muted)">'+
+      '<th style="text-align:left;padding:8px 10px">Player</th>'+
+      '<th style="text-align:left;padding:8px 10px">Movement</th>'+
+      '<th style="text-align:left;padding:8px 10px">Pts gained</th>'+
+      '<th style="text-align:left;padding:8px 10px">What drove it</th>'+
+    '</tr>';
+  rows.forEach(r=>{
+    let mv;
+    if(r.rankChange>0) mv='<span style="color:var(--green);font-weight:600">&#8593; +'+r.rankChange+'</span>';
+    else if(r.rankChange<0) mv='<span style="color:var(--red);font-weight:600">&#8595; '+r.rankChange+'</span>';
+    else mv='<span style="color:var(--muted)">– no change</span>';
+    mv+=' <span style="color:var(--muted);font-size:11px">('+r.fromRank+'&#8594;'+r.toRank+')</span>';
+    const pg=(r.pointsGained>0?'+':'')+r.pointsGained;
+    const pgColor=r.pointsGained>0?'var(--green)':r.pointsGained<0?'var(--red)':'var(--muted)';
+    const drove=r.drivers.length
+      ? r.drivers.map(x=>moveDescribe(x.m)+' <strong style="color:'+(x.r.pts>0?'var(--green)':'var(--red)')+'">'+(x.r.pts>0?'+':'')+x.r.pts+'</strong>').join('<br>')
+      : '<span style="color:var(--muted)">no scoring picks</span>';
+    html+='<tr style="border-top:1px solid var(--border)">'+
+      '<td style="padding:8px 10px;font-weight:600;white-space:nowrap">'+r.name+'</td>'+
+      '<td style="padding:8px 10px;white-space:nowrap">'+mv+'</td>'+
+      '<td style="padding:8px 10px;color:'+pgColor+';font-weight:600">'+pg+'</td>'+
+      '<td style="padding:8px 10px;font-size:11px;line-height:1.5">'+drove+'</td>'+
+    '</tr>';
+  });
+  html+='</table></div>';
+
+  // Commentary
+  MOVE_COMMENTARY=moveBuildCommentary(lockstep,changedCount,topClimber,biggestFaller,diff,picksBy);
+  html+='<div class="card" style="margin-top:12px">'+
+    '<div class="card-title">Shareable commentary</div>'+
+    '<div id="mvCommentary" style="font-size:13px;line-height:1.55;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:8px">'+MOVE_COMMENTARY+'</div>'+
+    '<button class="btn btn-outline" id="mvCopy" style="margin-top:10px;width:auto;padding:7px 16px;font-size:13px">&#128203; Copy commentary</button>'+
+    '<span id="mvCopyMsg" style="font-size:12px;color:var(--green);margin-left:10px"></span>'+
+  '</div>';
+
+  html+='</div>';
+  return html;
+}
+
+/* Templated commentary built from the computed diff. */
+function moveBuildCommentary(lockstep,changedCount,topClimber,biggestFaller,diff,picksBy){
+  const poolName=(MOVE_POOLS.find(p=>p.code===MOVE_SELECTED)||{}).name||"the pool";
+  if(lockstep){
+    return "Quiet day in "+poolName+" — standings held firm. The pack picked alike, so nobody gained ground. You only climb when you dare to differ. 📊";
+  }
+  let s="Shake-up in "+poolName+"! ";
+  if(topClimber&&topClimber.rankChange>0){
+    s+=topClimber.name+" jumped +"+topClimber.rankChange+" ("+topClimber.fromRank+"→"+topClimber.toRank+")";
+    // Differentiating match the climber scored most on
+    let best=null;
+    (topClimber.drivers||[]).forEach(x=>{ if(x.r.pts>0&&diff.some(d=>d.key===x.m.key&&d.isKo===x.m.isKo)){ if(!best||x.r.pts>best.r.pts) best=x; } });
+    if(!best&&topClimber.drivers&&topClimber.drivers.length) best=topClimber.drivers[0];
+    if(best) s+=" on the back of "+moveDescribe(best.m)+" that most of the pool missed";
+    s+=". ";
+  }
+  if(biggestFaller&&biggestFaller.rankChange<0){
+    s+=biggestFaller.name+" slipped "+biggestFaller.rankChange+" ("+biggestFaller.fromRank+"→"+biggestFaller.toRank+")";
+    const badPick=(biggestFaller.drivers||[]).filter(x=>x.r.pts<0)[0];
+    if(badPick) s+=" after "+moveDescribe(badPick.m)+" went the other way";
+    s+=". ";
+  }
+  s+="The lesson, as always: you only climb when you dare to differ. 📈";
+  return s;
+}
+
+function bindMovement(){
+  const back=document.getElementById("mvBack");
+  if(back) back.onclick=closeMovement;
+  const poolSel=document.getElementById("mvPool");
+  if(poolSel) poolSel.onchange=()=>{ MOVE_SELECTED=poolSel.value; moveLoadPoolAndDefaults(MOVE_SELECTED,()=>render()); };
+  const fromSel=document.getElementById("mvFrom");
+  if(fromSel) fromSel.onchange=()=>{ MOVE_FROM=parseInt(fromSel.value,10); render(); };
+  const toSel=document.getElementById("mvTo");
+  if(toSel) toSel.onchange=()=>{ MOVE_TO=parseInt(toSel.value,10); render(); };
+  const copy=document.getElementById("mvCopy");
+  if(copy) copy.onclick=()=>{
+    const done=()=>{ const m=document.getElementById("mvCopyMsg"); if(m){ m.textContent="✓ Copied!"; setTimeout(()=>{ if(m) m.textContent=""; },2000); } };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(MOVE_COMMENTARY).then(done).catch(done);
+    else done();
+  };
 }
 
 /* Cascade of knockout matchups derived from GLOBAL_RESULTS (ST.results while on

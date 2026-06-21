@@ -528,6 +528,29 @@ const R32_SEEDS=[
   {a:{t:"W",g:"K"},  b:{t:"T3",label:"Best 3rd: D/E/I/J/L"}, date:"Jul 3"},  // 15: 1K vs 3DEIJL
 ];
 
+/* Authoritative R32 schedule (verified from official FOX bracket, all times ET).
+   Keyed by R32_SEEDS index — the seed order differs from match number, so this
+   maps each seed slot to its real match #, date, kickoff, and venue. The seed
+   descriptors were verified to match this schedule exactly (no reorder needed). */
+const R32_SCHEDULE={
+  0: {m:73, day:"Sun Jun 28", time:"3:00 PM ET", venue:"SoFi Stadium, Los Angeles"},
+  1: {m:76, day:"Mon Jun 29", time:"1:00 PM ET", venue:"NRG Stadium, Houston"},
+  2: {m:74, day:"Mon Jun 29", time:"4:30 PM ET", venue:"Gillette Stadium, Boston"},
+  3: {m:75, day:"Mon Jun 29", time:"9:00 PM ET", venue:"Estadio BBVA, Monterrey"},
+  4: {m:78, day:"Tue Jun 30", time:"1:00 PM ET", venue:"AT&T Stadium, Dallas"},
+  5: {m:77, day:"Tue Jun 30", time:"5:00 PM ET", venue:"MetLife, New York/New Jersey"},
+  6: {m:79, day:"Tue Jun 30", time:"9:00 PM ET", venue:"Estadio Azteca, Mexico City"},
+  7: {m:80, day:"Wed Jul 1",  time:"12:00 PM ET", venue:"Mercedes-Benz Stadium, Atlanta"},
+  8: {m:82, day:"Wed Jul 1",  time:"4:00 PM ET", venue:"Lumen Field, Seattle"},
+  9: {m:81, day:"Wed Jul 1",  time:"8:00 PM ET", venue:"Levi's Stadium, San Francisco Bay"},
+  10:{m:84, day:"Thu Jul 2",  time:"3:00 PM ET", venue:"SoFi Stadium, Los Angeles"},
+  11:{m:83, day:"Thu Jul 2",  time:"7:00 PM ET", venue:"BMO Field, Toronto"},
+  12:{m:85, day:"Thu Jul 2",  time:"11:00 PM ET", venue:"BC Place, Vancouver"},
+  13:{m:88, day:"Fri Jul 3",  time:"2:00 PM ET", venue:"AT&T Stadium, Dallas"},
+  14:{m:86, day:"Fri Jul 3",  time:"6:00 PM ET", venue:"Hard Rock Stadium, Miami"},
+  15:{m:87, day:"Fri Jul 3",  time:"9:30 PM ET", venue:"Arrowhead Stadium, Kansas City"}
+};
+
 const KO_ROUNDS=[
   {id:"r32",label:"Round of 32",slots:16},
   {id:"r16",label:"Round of 16",slots:8},
@@ -815,6 +838,41 @@ function seedLabel(seed){
 
 function isT3Slot(seed){
   return seed.t==="T3";
+}
+
+/* Every team still alive for an R32 override dropdown: from a DECIDED group,
+   its top three (1st/2nd/3rd are the only ones that can reach the R32); from an
+   UNDECIDED group, all four (we don't yet know who's out). De-duped, sorted. */
+function getAliveTeams(){
+  const st=actualStandings();
+  const set={};
+  for(const g in GROUPS){
+    if(st[g]) ["winner","runner","third"].forEach(k=>{ if(st[g][k]) set[st[g][k]]=true; });
+    else GROUPS[g].forEach(t=>{ set[t]=true; });
+  }
+  return Object.keys(set).sort((a,b)=>a.localeCompare(b));
+}
+
+/* Resolve ONE side of an R32 slot for the Global Results board.
+   Priority: a manual override (stored team) > the real team from decided
+   standings (W/R only) > an honest placeholder label. Never guesses a T3 team.
+   Returns {team, label, placeholder} — team is null when only a placeholder. */
+function resolveR32Side(side,overrideTeam,actS){
+  if(overrideTeam) return {team:overrideTeam,label:overrideTeam,placeholder:false};
+  if(side.t==="T3")  return {team:null,label:side.label||"Best 3rd place team",placeholder:true};
+  const t=slotTeam(side,actS);
+  if(t) return {team:t,label:t,placeholder:false};
+  return {team:null,label:seedLabel(side),placeholder:true};
+}
+
+/* Resolve both sides of R32 slot i. actS = actualStandings() (pass once). */
+function resolveR32Slot(i,actS){
+  const seed=R32_SEEDS[i];
+  const ov=(ST.results.koMatches.r32&&ST.results.koMatches.r32[i])||{};
+  return {
+    home:resolveR32Side(seed.a,ov.home,actS),
+    away:resolveR32Side(seed.b,ov.away,actS)
+  };
 }
 
 /* ══ DEMO DATA (super-admin only) ══
@@ -2607,11 +2665,18 @@ function renderGlobalResults(){
 
   // ── Knockout ─────────────────────────────────────────────────
   const cascade=getGlobalCascade();
+  const actS=actualStandings();
+  const aliveTeams=getAliveTeams();
   const koRounds=[{id:'r32',label:'Round of 32',slots:16},{id:'r16',label:'Round of 16',slots:8},{id:'qf',label:'Quarterfinals',slots:4},{id:'sf',label:'Semifinals',slots:2},{id:'final',label:'Final',slots:1}];
   html+='<div class="card"><div class="card-title">Knockout results</div>'+
-    '<div class="notice">Pick the winner of each match, then push. Matchups cascade from earlier rounds.</div>';
+    '<div class="notice">R32 matchups auto-fill from group standings as they lock in — undecided slots show a placeholder. Use the override dropdowns (all teams still alive) to set any slot manually. Later rounds cascade from earlier results.</div>';
   koRounds.forEach(function(rd){
     html+='<div style="margin-top:10px"><div style="font-weight:700;font-size:13px;color:var(--fifa-blue);margin-bottom:6px">'+rd.label+'</div>';
+    if(rd.id==='r32'){
+      for(let i=0;i<16;i++){ html+=globalR32SlotHtml(i,actS,aliveTeams); }
+      html+='</div>';
+      return;
+    }
     for(let i=0;i<rd.slots;i++){
       const key=rd.id+'_'+i;
       const m=cascade[rd.id][i]||null;
@@ -2646,6 +2711,61 @@ function renderGlobalResults(){
   return html;
 }
 
+/* One R32 slot for the Global Results board: real teams from decided standings
+   (honest placeholders otherwise), a manual override dropdown per side (all
+   teams still alive), the verified date/time/venue, and a winner picker. */
+function globalR32SlotHtml(i,actS,aliveTeams){
+  const key='r32_'+i;
+  const sch=R32_SCHEDULE[i]||{};
+  const slot=resolveR32Slot(i,actS);
+  const ov=(ST.results.koMatches.r32&&ST.results.koMatches.r32[i])||{};
+  const res=ST.results.ko[key]||"";
+
+  const sideDisp=s=>s.placeholder
+    ? '<em style="color:var(--muted)">'+s.label+'</em>'
+    : '<strong>'+s.label+'</strong>';
+  const matchNo=sch.m?'M'+sch.m+' · ':'';
+  const schedLine=(sch.day||sch.time||sch.venue)
+    ? '<div style="font-size:10px;color:var(--muted);margin-bottom:5px">'+[sch.day,sch.time,sch.venue].filter(Boolean).join(' · ')+'</div>'
+    : '';
+  const chip=res?'<span style="font-size:10px;color:var(--green);font-weight:600">&#9679; '+res+'</span>':'';
+
+  // Per-side override dropdown (blank = auto-derive from standings).
+  const ovSel=(side,cur)=>'<select data-gr32side="'+i+'|'+side+'" class="asel" style="flex:0 0 auto;max-width:150px">'+
+    '<option value="">— auto —</option>'+
+    aliveTeams.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('')+
+  '</select>';
+
+  // Winner options come ONLY from real (resolved) teams, never placeholders.
+  const rh=slot.home.team, ra=slot.away.team;
+  const bothReal=rh&&ra;
+  const winnerSel=(rh||ra)
+    ? '<select data-gko="'+key+'" class="asel" style="flex:0 0 auto">'+
+        '<option value="">– winner –</option>'+
+        (rh?'<option value="'+rh+'"'+(res===rh?' selected':'')+'>&#127942; '+rh+'</option>':'')+
+        (ra?'<option value="'+ra+'"'+(res===ra?' selected':'')+'>&#127942; '+ra+'</option>':'')+
+      '</select>'+
+      '<button class="btn-sm" data-gpush-ko="'+key+'">&#11014; Push winner</button>'+
+      (res?'<button class="btn-sm btn-danger" data-gclear-ko="'+key+'">&#10005; Clear winner</button>':'')
+    : '<span style="font-size:10px;color:var(--muted)">Set both teams to pick a winner</span>';
+
+  const hasOverride=!!(ov.home||ov.away);
+
+  return '<div style="margin-bottom:11px;padding-bottom:9px;border-bottom:1px solid var(--border)">'+
+    '<div style="font-size:12px;margin-bottom:2px;display:flex;justify-content:space-between;gap:6px">'+
+      '<span>'+matchNo+sideDisp(slot.home)+' <span style="color:var(--muted)">vs</span> '+sideDisp(slot.away)+'</span>'+chip+
+    '</div>'+
+    schedLine+
+    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px">'+
+      '<span style="font-size:10px;color:var(--muted)">Home</span>'+ovSel('home',ov.home||'')+
+      '<span style="font-size:10px;color:var(--muted)">Away</span>'+ovSel('away',ov.away||'')+
+      '<button class="btn-sm"'+(bothReal?'':' disabled title="Set both teams first"')+' data-gpush-r32="'+i+'">&#11014; Push matchup</button>'+
+      (hasOverride?'<button class="btn-sm btn-danger" data-gclear-r32="'+i+'">&#10005; Clear override</button>':'')+
+    '</div>'+
+    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">'+winnerSel+'</div>'+
+  '</div>';
+}
+
 /* Push a single match result to EVERY pool's results node. type:"group"|"ko".
    value=null clears (removes) that key. Writes ONLY the specific result path —
    never user/pick/settings data. Calls cb(err,poolCount). */
@@ -2660,19 +2780,46 @@ function pushResultToAllPools(type,key,value,cb){
   }).catch(e=>cb&&cb(e.message));
 }
 
-/* Push every entered group + ko result to all pools in one atomic update. */
+/* Push every entered group + ko result AND the knockout matchup board
+   (koMatches) to all pools in one atomic update. The matchup board is what
+   Round 2 players pick against, so it propagates with the results. */
 function pushAllResultsToAllPools(cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
     const codes=Object.keys(pools);
     const updates={};
+    // Only push matchup slots that actually have both teams set.
+    const km=ST.results.koMatches||{};
+    let kmCount=0;
     codes.forEach(code=>{
       Object.keys(ST.results.group).forEach(k=>{ updates["pools/"+code+"/results/group/"+k]=ST.results.group[k]; });
       Object.keys(ST.results.ko).forEach(k=>{ updates["pools/"+code+"/results/ko/"+k]=ST.results.ko[k]; });
+      Object.keys(km).forEach(rnd=>{
+        const arr=km[rnd]||[];
+        Object.keys(arr).forEach(idx=>{
+          const m=arr[idx];
+          if(m&&m.home&&m.away){ updates["pools/"+code+"/results/koMatches/"+rnd+"/"+idx]={home:m.home,away:m.away}; }
+        });
+      });
     });
+    Object.keys(km).forEach(rnd=>{ const arr=km[rnd]||[]; Object.keys(arr).forEach(idx=>{ const m=arr[idx]; if(m&&m.home&&m.away) kmCount++; }); });
     if(!Object.keys(updates).length){ cb&&cb(null,0,0); return; }
-    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length,Object.keys(ST.results.group).length+Object.keys(ST.results.ko).length));
+    const resCount=Object.keys(ST.results.group).length+Object.keys(ST.results.ko).length+kmCount;
+    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length,resCount));
+  }).catch(e=>cb&&cb(e.message));
+}
+
+/* Push a single knockout matchup slot (e.g. koMatches.r32[i]={home,away}) to
+   every pool. value=null clears it. Writes ONLY that matchup path. */
+function pushKoMatchToAllPools(round,i,value,cb){
+  if(!db){ cb&&cb("Firebase not initialized"); return; }
+  db.ref("pools").once("value").then(snap=>{
+    const pools=snap.val()||{};
+    const codes=Object.keys(pools);
+    const updates={};
+    codes.forEach(code=>{ updates["pools/"+code+"/results/koMatches/"+round+"/"+i]=value; });
+    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
   }).catch(e=>cb&&cb(e.message));
 }
 
@@ -2713,6 +2860,55 @@ function bindGlobalResults(){
     sel.onchange=()=>{
       const key=sel.dataset.gko;
       if(sel.value) ST.results.ko[key]=sel.value; else delete ST.results.ko[key];
+    };
+  });
+
+  // R32 per-side override dropdowns — mutate the working copy only (blank =
+  // clear that side back to auto-derive). Re-render so the matchup line + winner
+  // options reflect the change.
+  document.querySelectorAll("[data-gr32side]").forEach(sel=>{
+    sel.onchange=()=>{
+      const [iStr,side]=sel.dataset.gr32side.split("|");
+      const i=parseInt(iStr,10);
+      if(!ST.results.koMatches.r32) ST.results.koMatches.r32=[];
+      if(!ST.results.koMatches.r32[i]) ST.results.koMatches.r32[i]={home:"",away:""};
+      ST.results.koMatches.r32[i][side]=sel.value||"";
+      const slot=ST.results.koMatches.r32[i];
+      if(!slot.home&&!slot.away) delete ST.results.koMatches.r32[i]; // fully auto again
+      render();
+    };
+  });
+  // Push a single R32 matchup (both teams) to all pools.
+  document.querySelectorAll("[data-gpush-r32]").forEach(btn=>{
+    btn.onclick=()=>{
+      const i=parseInt(btn.dataset.gpushR32,10);
+      const slot=resolveR32Slot(i,actualStandings());
+      const home=slot.home.team, away=slot.away.team;
+      if(!home||!away){ setMsg("Both teams must be set (auto or override) before pushing.",false); return; }
+      const sch=R32_SCHEDULE[i]||{};
+      const label=(sch.m?"M"+sch.m+" ":"")+home+" vs "+away;
+      showConfirmModal('Push matchup "'+label+'" to all '+poolCount+' pools? This sets the Round 2 matchup for all '+playerCount+' players. It does NOT change anyone’s picks.',()=>{
+        btn.disabled=true; btn.textContent="Pushing...";
+        if(!ST.results.koMatches.r32) ST.results.koMatches.r32=[];
+        ST.results.koMatches.r32[i]={home:home,away:away};
+        pushKoMatchToAllPools("r32",i,{home:home,away:away},(err,n)=>{
+          if(err){ setMsg("Push failed: "+err,false); btn.disabled=false; btn.innerHTML="&#11014; Push matchup"; return; }
+          setMsg("✓ Pushed matchup "+label+" to "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
+    };
+  });
+  // Clear an R32 manual override (reverts the slot to auto-derive) everywhere.
+  document.querySelectorAll("[data-gclear-r32]").forEach(btn=>{
+    btn.onclick=()=>{
+      const i=parseInt(btn.dataset.gclearR32,10);
+      showConfirmModal('Clear the manual matchup override for this slot from all '+poolCount+' pools? It will revert to auto-derive from standings.',()=>{
+        pushKoMatchToAllPools("r32",i,null,(err,n)=>{
+          if(err){ setMsg("Clear failed: "+err,false); return; }
+          if(ST.results.koMatches.r32) delete ST.results.koMatches.r32[i];
+          setMsg("✓ Cleared override from "+n+" pool"+(n!==1?"s":"")+".",true); render();
+        });
+      });
     };
   });
 

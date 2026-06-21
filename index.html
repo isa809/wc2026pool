@@ -1872,6 +1872,16 @@ function moveDescribe(m){
   return gm.home+" vs "+gm.away;
 }
 
+/* Readable label for what a player picked on a match (r = movePointsForMatch).
+   Group: W→home, L→away, D→"Draw". KO: the picked team. null if no pick. */
+function movePickLabel(m,r){
+  if(!r||!r.picked||r.outcome==null) return null;
+  if(m.isKo) return r.outcome;
+  if(r.outcome==="D") return "Draw";
+  const gm=findGM(m.key); if(!gm) return r.outcome;
+  return r.outcome==="W"?gm.home:gm.away;
+}
+
 function openMovement(btn){
   if(btn){btn.disabled=true;btn.textContent="Loading...";}
   if(_updateListener&&CURRENT_POOL_CODE&&db){
@@ -1964,10 +1974,12 @@ function renderMovement(){
     const f=fromMap[s.key]||{rank:s.rank,score:s.score};
     const rankChange=f.rank-s.rank;       // + = climbed
     const pointsGained=s.score-f.score;
-    const drivers=wMatches.map(m=>({m,r:movePointsForMatch(picksBy[s.key],m)}))
-      .filter(x=>x.r.picked&&x.r.pts!==0)
-      .sort((a,b)=>b.r.pts-a.r.pts);
-    return {key:s.key,name:s.name,fromRank:f.rank,toRank:s.rank,rankChange,pointsGained,drivers};
+    const scored=wMatches.map(m=>({m,r:movePointsForMatch(picksBy[s.key],m)}));
+    // drivers = matches that moved points (used by the commentary generator).
+    const drivers=scored.filter(x=>x.r.picked&&x.r.pts!==0).sort((a,b)=>b.r.pts-a.r.pts);
+    // windowPicks = every window match with the player's pick context (display).
+    const windowPicks=scored.slice().sort((a,b)=>b.r.pts-a.r.pts);
+    return {key:s.key,name:s.name,fromRank:f.rank,toRank:s.rank,rankChange,pointsGained,drivers,windowPicks};
   }).sort((a,b)=>{
     if(Math.abs(b.rankChange)!==Math.abs(a.rankChange)) return Math.abs(b.rankChange)-Math.abs(a.rankChange);
     return b.pointsGained-a.pointsGained;
@@ -2008,9 +2020,23 @@ function renderMovement(){
     mv+=' <span style="color:var(--muted);font-size:11px">('+r.fromRank+'&#8594;'+r.toRank+')</span>';
     const pg=(r.pointsGained>0?'+':'')+r.pointsGained;
     const pgColor=r.pointsGained>0?'var(--green)':r.pointsGained<0?'var(--red)':'var(--muted)';
-    const drove=r.drivers.length
-      ? r.drivers.map(x=>moveDescribe(x.m)+' <strong style="color:'+(x.r.pts>0?'var(--green)':'var(--red)')+'">'+(x.r.pts>0?'+':'')+x.r.pts+'</strong>').join('<br>')
-      : '<span style="color:var(--muted)">no scoring picks</span>';
+    const drove=r.windowPicks.length
+      ? r.windowPicks.map(x=>{
+          const label=movePickLabel(x.m,x.r);
+          let ctx;
+          if(label===null){
+            ctx=' <span style="color:var(--muted)">· no pick</span>';
+          } else {
+            const ok=!!x.r.hit;
+            const col=ok?'var(--green)':'var(--red)';
+            ctx=' <span style="color:var(--muted)">· picked '+label+'</span>'+
+                '<span style="color:'+col+'">'+(ok?' &#10003;':' &#10007;')+'</span>';
+          }
+          const ptsCol=x.r.pts>0?'var(--green)':x.r.pts<0?'var(--red)':'var(--muted)';
+          const pts=' <strong style="color:'+ptsCol+'">'+(x.r.pts>0?'+':'')+x.r.pts+'</strong>';
+          return moveDescribe(x.m)+ctx+pts;
+        }).join('<br>')
+      : '<span style="color:var(--muted)">no matches in window</span>';
     html+='<tr style="border-top:1px solid var(--border)">'+
       '<td style="padding:8px 10px;font-weight:600;white-space:nowrap">'+r.name+'</td>'+
       '<td style="padding:8px 10px;white-space:nowrap">'+mv+'</td>'+

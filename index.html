@@ -2689,22 +2689,10 @@ function renderGlobalResults(){
   }
   html+='</div></div>';
 
-  // ── Knockout ─────────────────────────────────────────────────
+  // ── Knockout (visual click-to-set bracket) ──────────────────
   const actS=actualStandings();
   const aliveTeams=getAliveTeams();
-  const koRounds=[{id:'r32',label:'Round of 32',slots:16},{id:'r16',label:'Round of 16',slots:8},{id:'qf',label:'Quarterfinals',slots:4},{id:'sf',label:'Semifinals',slots:2},{id:'final',label:'Final',slots:1}];
-  html+='<div class="card"><div class="card-title">Knockout results</div>'+
-    '<div class="notice">R32 matchups auto-fill from group standings; later rounds derive from the winners of their feeding matches (shown as "Winner M##" until set). Override dropdowns (all teams still alive) let you set any slot manually. Nothing changes anyone’s picks.</div>';
-  koRounds.forEach(function(rd){
-    html+='<div style="margin-top:10px"><div style="font-weight:700;font-size:13px;color:var(--fifa-blue);margin-bottom:6px">'+rd.label+'</div>';
-    if(rd.id==='r32'){
-      for(let i=0;i<16;i++){ html+=globalR32SlotHtml(i,actS,aliveTeams); }
-    } else {
-      for(let i=0;i<rd.slots;i++){ html+=globalKoLaterSlotHtml(rd.id,i,aliveTeams); }
-    }
-    html+='</div>';
-  });
-  html+='</div>';
+  html+=renderGlobalKnockoutBracket(actS,aliveTeams);
 
   const msgHtml=GLOBAL_MSG?'<div style="color:'+(GLOBAL_MSG.ok?'var(--green)':'var(--red)')+'">'+GLOBAL_MSG.text+'</div>':'';
   html+='<div id="grMsg" style="margin-top:6px;font-size:13px">'+msgHtml+'</div>';
@@ -2712,114 +2700,135 @@ function renderGlobalResults(){
   return html;
 }
 
-/* One R32 slot for the Global Results board: real teams from decided standings
-   (honest placeholders otherwise), a manual override dropdown per side (all
-   teams still alive), the verified date/time/venue, and a winner picker. */
-function globalR32SlotHtml(i,actS,aliveTeams){
-  const key='r32_'+i;
-  const sch=R32_SCHEDULE[i]||{};
-  const slot=resolveR32Slot(i,actS);
-  const ov=(ST.results.koMatches.r32&&ST.results.koMatches.r32[i])||{};
-  const res=ST.results.ko[key]||"";
+/* Resolve any KO slot for the Global Results bracket: R32 from standings +
+   overrides, later rounds from feeding-match winners + overrides. Returns
+   {home:{team,label,placeholder}, away:{...}}. */
+function resolveGlobalKoSlot(round,i,actS){
+  return round==="r32" ? resolveR32Slot(i,actS) : resolveKoLaterSlot(round,i);
+}
+function globalKoSchedule(round,i){
+  return round==="r32" ? (R32_SCHEDULE[i]||{}) : ((KO_LATER_SCHEDULE[round]||{})[i]||{});
+}
 
-  const sideDisp=s=>s.placeholder
-    ? '<em style="color:var(--muted)">'+s.label+'</em>'
-    : '<strong>'+s.label+'</strong>';
-  const matchNo=sch.m?'M'+sch.m+' · ':'';
-  const schedLine=(sch.day||sch.time||sch.venue)
-    ? '<div style="font-size:10px;color:var(--muted);margin-bottom:5px">'+[sch.day,sch.time,sch.venue].filter(Boolean).join(' · ')+'</div>'
-    : '';
-  const chip=res?'<span style="font-size:10px;color:var(--green);font-weight:600">&#9679; '+res+'</span>':'';
+/* One bracket match for the Global Results visual bracket — mirrors the per-pool
+   admin bracket (click a real team to set/clear the winner; the global click
+   handler also PUSHES to all pools). A ✎ pencil reveals override dropdowns
+   (all alive teams) wired to the existing matchup-push handlers. Placeholders
+   ("Winner A", "Best 3rd…", "Winner M77") are shown but are not clickable. */
+function globalBracketSlotHtml(round,i,actS,aliveTeams){
+  const key=round+'_'+i;
+  const slot=resolveGlobalKoSlot(round,i,actS);
+  const sch=globalKoSchedule(round,i);
+  const res=ST.results.ko[key]||null;
+  const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
 
-  // Per-side override dropdown (blank = auto-derive from standings).
-  const ovSel=(side,cur)=>'<select data-gr32side="'+i+'|'+side+'" class="asel" style="flex:0 0 auto;max-width:150px">'+
+  const slotSide=(s)=>{
+    const real=!s.placeholder&&!!s.team;
+    const won=res&&real&&res===s.team;
+    return '<div class="brd-slot'+(won?' correct':'')+(real?' hoverable':'')+'" '+
+      (real?'data-gkowin="'+key+'" data-gkoteam="'+s.team+'" ':'')+
+      'style="cursor:'+(real?'pointer':'default')+';'+(won?'background:#1a6b3c;':'')+'">'+
+        '<span class="slot-name" style="'+(won?'color:#fff;font-weight:600':'')+'" title="'+s.label+'">'+
+          (real?s.team:'<em style="color:var(--muted);font-size:10px">'+s.label+'</em>')+
+        '</span>'+
+        (won?'<span style="font-size:10px;color:#fff;margin-left:4px" title="Click to clear">&#127942;</span><span class="admin-clear-hint">&#10005; clear</span>':'')+
+      '</div>';
+  };
+
+  const mlabel=[sch.m?'M'+sch.m:'',sch.day,sch.time,sch.venue].filter(Boolean).join(' · ');
+
+  // Override edit form (alive-team dropdowns) — reuses the existing matchup
+  // override + push/clear handlers via their data-* attributes.
+  const sideAttr=round==="r32"?('data-gr32side="'+i+'|'):('data-gkoside="'+round+'|'+i+'|');
+  const ovSel=(sideName,cur)=>'<select '+sideAttr+sideName+'" class="asel" style="width:100%;font-size:11px;margin-bottom:4px">'+
     '<option value="">— auto —</option>'+
     aliveTeams.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('')+
   '</select>';
-
-  // Winner options come ONLY from real (resolved) teams, never placeholders.
-  const rh=slot.home.team, ra=slot.away.team;
-  const bothReal=rh&&ra;
-  const winnerSel=(rh||ra)
-    ? '<select data-gko="'+key+'" class="asel" style="flex:0 0 auto">'+
-        '<option value="">– winner –</option>'+
-        (rh?'<option value="'+rh+'"'+(res===rh?' selected':'')+'>&#127942; '+rh+'</option>':'')+
-        (ra?'<option value="'+ra+'"'+(res===ra?' selected':'')+'>&#127942; '+ra+'</option>':'')+
-      '</select>'+
-      '<button class="btn-sm" data-gpush-ko="'+key+'">&#11014; Push winner</button>'+
-      (res?'<button class="btn-sm btn-danger" data-gclear-ko="'+key+'">&#10005; Clear winner</button>':'')
-    : '<span style="font-size:10px;color:var(--muted)">Set both teams to pick a winner</span>';
-
+  const pushAttr=round==="r32"?('data-gpush-r32="'+i+'"'):('data-gpushkomatch="'+round+'|'+i+'"');
+  const clearAttr=round==="r32"?('data-gclear-r32="'+i+'"'):('data-gclearkomatch="'+round+'|'+i+'"');
+  const bothReal=slot.home.team&&slot.away.team;
   const hasOverride=!!(ov.home||ov.away);
 
-  return '<div style="margin-bottom:11px;padding-bottom:9px;border-bottom:1px solid var(--border)">'+
-    '<div style="font-size:12px;margin-bottom:2px;display:flex;justify-content:space-between;gap:6px">'+
-      '<span>'+matchNo+sideDisp(slot.home)+' <span style="color:var(--muted)">vs</span> '+sideDisp(slot.away)+'</span>'+chip+
+  return '<div class="brd-match" style="position:relative">'+
+      slotSide(slot.home)+
+      slotSide(slot.away)+
+      (mlabel?'<div style="font-size:8.5px;color:var(--muted);text-align:center;padding:2px 4px 1px;line-height:1.25;border-top:1px solid var(--border)">'+mlabel+'</div>':'')+
+      '<button class="admin-edit-btn" data-gedit-match="'+key+'" title="Override matchup" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;border-radius:4px;opacity:.6">&#9998;</button>'+
+      '<div class="admin-edit-form" id="gedit-'+key+'" style="display:none;padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+
+        '<div style="font-size:9px;color:var(--muted);margin-bottom:3px">Override matchup (alive teams):</div>'+
+        ovSel('home',ov.home||'')+ovSel('away',ov.away||'')+
+        '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+          '<button class="btn-sm"'+(bothReal?'':' disabled')+' '+pushAttr+'>&#11014; Push</button>'+
+          (hasOverride?'<button class="btn-sm btn-danger" '+clearAttr+'>&#10005; Clear</button>':'')+
+        '</div>'+
+      '</div>'+
+    '</div>';
+}
+
+/* The Final column for the global bracket (champion crown + click-to-set). */
+function globalBracketFinalHtml(actS,aliveTeams){
+  const slot=resolveKoLaterSlot('final',0);
+  const sch=globalKoSchedule('final',0);
+  const res=ST.results.ko['final_0']||null;
+  const ov=(ST.results.koMatches.final&&ST.results.koMatches.final[0])||{};
+  const fslot=(s)=>{
+    const real=!s.placeholder&&!!s.team;
+    const won=res&&real&&res===s.team;
+    return '<div class="final-slot'+(won?' correct':'')+(real?' hoverable':'')+'" '+
+      (real?'data-gkowin="final_0" data-gkoteam="'+s.team+'" ':'')+
+      'style="cursor:'+(real?'pointer':'default')+';'+(won?'background:#1a6b3c;':'')+'">'+
+        '<span class="slot-name" style="'+(won?'color:#fff;font-weight:600':'')+'" title="'+s.label+'">'+
+          (real?s.team:'<em style="color:var(--muted);font-size:10px">'+s.label+'</em>')+
+        '</span>'+
+        (won?'<span style="font-size:10px;color:#fff;margin-left:4px">&#127942;</span><span class="admin-clear-hint">&#10005; clear</span>':'')+
+      '</div>';
+  };
+  const mlabel=[sch.m?'M'+sch.m:'',sch.day,sch.time,sch.venue].filter(Boolean).join(' · ');
+  const bothReal=slot.home.team&&slot.away.team;
+  const hasOverride=!!(ov.home||ov.away);
+  return '<div class="brd-col">'+
+    '<div class="brd-col-title">The Final<span class="pts">+'+SC.ko['final'].base+' pts</span></div>'+
+    '<div class="brd-final">'+
+      '<div class="winner-crown">&#127942;</div>'+
+      '<div class="final-title">Champion</div>'+
+      '<div class="final-box" style="position:relative">'+
+        fslot(slot.home)+fslot(slot.away)+
+        (mlabel?'<div style="font-size:8.5px;color:var(--muted);text-align:center;padding:2px 4px;line-height:1.25;border-top:1px solid var(--border)">'+mlabel+'</div>':'')+
+        '<button class="admin-edit-btn" data-gedit-match="final_0" title="Override matchup" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;opacity:.6">&#9998;</button>'+
+        '<div class="admin-edit-form" id="gedit-final_0" style="display:none;padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+
+          '<div style="font-size:9px;color:var(--muted);margin-bottom:3px">Override matchup (alive teams):</div>'+
+          '<select data-gkoside="final|0|home" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.home===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
+          '<select data-gkoside="final|0|away" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.away===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
+          '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+            '<button class="btn-sm"'+(bothReal?'':' disabled')+' data-gpushkomatch="final|0">&#11014; Push</button>'+
+            (hasOverride?'<button class="btn-sm btn-danger" data-gclearkomatch="final|0">&#10005; Clear</button>':'')+
+          '</div>'+
+        '</div>'+
+      '</div>'+
     '</div>'+
-    schedLine+
-    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px">'+
-      '<span style="font-size:10px;color:var(--muted)">Home</span>'+ovSel('home',ov.home||'')+
-      '<span style="font-size:10px;color:var(--muted)">Away</span>'+ovSel('away',ov.away||'')+
-      '<button class="btn-sm"'+(bothReal?'':' disabled title="Set both teams first"')+' data-gpush-r32="'+i+'">&#11014; Push matchup</button>'+
-      (hasOverride?'<button class="btn-sm btn-danger" data-gclear-r32="'+i+'">&#10005; Clear override</button>':'')+
-    '</div>'+
-    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">'+winnerSel+'</div>'+
   '</div>';
 }
 
-/* One R16/QF/SF/Final slot for the Global Results board. Both sides derive from
-   the WINNERS of the two feeding matches (honest "Winner M##" placeholders until
-   those are set), with a manual override dropdown per side, the verified
-   date/time/venue, and a winner picker. Never shows a guessed team. */
-function globalKoLaterSlotHtml(round,i,aliveTeams){
-  const key=round+'_'+i;
-  const sch=(KO_LATER_SCHEDULE[round]||{})[i]||{};
-  const slot=resolveKoLaterSlot(round,i);
-  const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
-  const res=ST.results.ko[key]||"";
-
-  const sideDisp=s=>s.placeholder
-    ? '<em style="color:var(--muted)">'+s.label+'</em>'
-    : '<strong>'+s.label+'</strong>';
-  const matchNo=sch.m?'M'+sch.m+' · ':'';
-  const schedLine=(sch.day||sch.time||sch.venue)
-    ? '<div style="font-size:10px;color:var(--muted);margin-bottom:5px">'+[sch.day,sch.time,sch.venue].filter(Boolean).join(' · ')+'</div>'
-    : '';
-  const chip=res?'<span style="font-size:10px;color:var(--green);font-weight:600">&#9679; '+res+'</span>':'';
-
-  // Per-side override dropdown (blank = derive from the feeding match winner).
-  const ovSel=(side,cur)=>'<select data-gkoside="'+round+'|'+i+'|'+side+'" class="asel" style="flex:0 0 auto;max-width:150px">'+
-    '<option value="">— auto —</option>'+
-    aliveTeams.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('')+
-  '</select>';
-
-  const rh=slot.home.team, ra=slot.away.team;
-  const bothReal=rh&&ra;
-  const winnerSel=(rh||ra)
-    ? '<select data-gko="'+key+'" class="asel" style="flex:0 0 auto">'+
-        '<option value="">– winner –</option>'+
-        (rh?'<option value="'+rh+'"'+(res===rh?' selected':'')+'>&#127942; '+rh+'</option>':'')+
-        (ra?'<option value="'+ra+'"'+(res===ra?' selected':'')+'>&#127942; '+ra+'</option>':'')+
-      '</select>'+
-      '<button class="btn-sm" data-gpush-ko="'+key+'">&#11014; Push winner</button>'+
-      (res?'<button class="btn-sm btn-danger" data-gclear-ko="'+key+'">&#10005; Clear winner</button>':'')
-    : '<span style="font-size:10px;color:var(--muted)">Awaiting feeding-match winners</span>';
-
-  const hasOverride=!!(ov.home||ov.away);
-
-  return '<div style="margin-bottom:11px;padding-bottom:9px;border-bottom:1px solid var(--border)">'+
-    '<div style="font-size:12px;margin-bottom:2px;display:flex;justify-content:space-between;gap:6px">'+
-      '<span>'+matchNo+sideDisp(slot.home)+' <span style="color:var(--muted)">vs</span> '+sideDisp(slot.away)+'</span>'+chip+
-    '</div>'+
-    schedLine+
-    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px">'+
-      '<span style="font-size:10px;color:var(--muted)">Home</span>'+ovSel('home',ov.home||'')+
-      '<span style="font-size:10px;color:var(--muted)">Away</span>'+ovSel('away',ov.away||'')+
-      '<button class="btn-sm"'+(bothReal?'':' disabled title="Set both teams first"')+' data-gpushkomatch="'+round+'|'+i+'">&#11014; Push matchup</button>'+
-      (hasOverride?'<button class="btn-sm btn-danger" data-gclearkomatch="'+round+'|'+i+'">&#10005; Clear override</button>':'')+
-    '</div>'+
-    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">'+winnerSel+'</div>'+
-  '</div>';
+/* The full Global Results knockout as a visual click-to-set bracket, using the
+   corrected cascade (R32 from standings, later rounds from feeding winners).
+   Clicking a team sets + pushes the winner to all pools; later rounds cascade. */
+function renderGlobalKnockoutBracket(actS,aliveTeams){
+  let html='<div class="card" style="padding:12px">'+
+    '<div class="card-title" style="margin-bottom:6px">Knockout bracket '+
+      '<span style="font-size:11px;font-weight:400;color:var(--muted)">— click a team to set the winner (pushes to all pools)</span></div>'+
+    '<div class="notice-blue" style="margin-bottom:8px">Click the winning team to record + push the result to all pools — later rounds cascade from the winners (shown as "Winner M##" until set). Click a set winner to clear it everywhere. Use &#9998; to override a matchup. Nothing changes anyone&#39;s picks.</div>'+
+    '<div class="bracket-wrap"><div class="bracket">';
+  const roundIds=['r32','r16','qf','sf'];
+  const roundLabels={r32:'Round of 32',r16:'Round of 16',qf:'Quarterfinals',sf:'Semifinals'};
+  const roundSlots={r32:16,r16:8,qf:4,sf:2};
+  roundIds.forEach(function(rid){
+    let col='';
+    for(let i=0;i<roundSlots[rid];i++){ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); }
+    html+='<div class="brd-col"><div class="brd-col-title">'+roundLabels[rid]+'<span class="pts">+'+SC.ko[rid].base+' pts</span></div><div class="brd-matches">'+col+'</div></div>';
+  });
+  html+=globalBracketFinalHtml(actS,aliveTeams);
+  html+='</div></div></div>';
+  return html;
 }
 
 /* Push a single match result to EVERY pool's results node. type:"group"|"ko".
@@ -2919,9 +2928,39 @@ function bindGlobalResults(){
     };
   });
 
-  // R32 per-side override dropdowns — mutate the working copy only (blank =
-  // clear that side back to auto-derive). Re-render so the matchup line + winner
-  // options reflect the change.
+  // Visual bracket: click a team to set the winner (toggle to clear) and push it
+  // to all pools. Optimistic local update + immediate re-render so the cascade
+  // flows instantly; on push error we revert and re-render.
+  document.querySelectorAll("[data-gkowin]").forEach(el=>{
+    el.onclick=(e)=>{
+      e.stopPropagation();
+      const key=el.dataset.gkowin, team=el.dataset.gkoteam;
+      if(!team) return;
+      const clearing=ST.results.ko[key]===team;
+      const value=clearing?null:team;
+      if(clearing) delete ST.results.ko[key]; else ST.results.ko[key]=team;
+      render(); // optimistic: show the new winner + cascade right away
+      pushResultToAllPools("ko",key,value,(err,n)=>{
+        if(err){
+          if(clearing) ST.results.ko[key]=team; else delete ST.results.ko[key]; // revert
+          setMsg("Push failed: "+err,false); render(); return;
+        }
+        setMsg((clearing?"✓ Cleared winner ("+key+")":"✓ Set winner "+team+" ("+key+")")+" across "+n+" pool"+(n!==1?"s":"")+".",true);
+      });
+    };
+  });
+  // Pencil ✎ — toggle a match's matchup-override form.
+  document.querySelectorAll("[data-gedit-match]").forEach(btn=>{
+    btn.onclick=(e)=>{
+      e.stopPropagation();
+      const f=document.getElementById("gedit-"+btn.dataset.geditMatch);
+      if(f) f.style.display=f.style.display==="none"?"block":"none";
+    };
+  });
+
+  // R32 per-side override dropdowns — stage into the working copy only (blank =
+  // clear that side back to auto-derive). No re-render here, so the pencil edit
+  // form stays open while both sides are set; the explicit Push applies + renders.
   document.querySelectorAll("[data-gr32side]").forEach(sel=>{
     sel.onchange=()=>{
       const [iStr,side]=sel.dataset.gr32side.split("|");
@@ -2931,7 +2970,6 @@ function bindGlobalResults(){
       ST.results.koMatches.r32[i][side]=sel.value||"";
       const slot=ST.results.koMatches.r32[i];
       if(!slot.home&&!slot.away) delete ST.results.koMatches.r32[i]; // fully auto again
-      render();
     };
   });
   // Push a single R32 matchup (both teams) to all pools.
@@ -2968,7 +3006,8 @@ function bindGlobalResults(){
     };
   });
 
-  // Later-round (r16/qf/sf/final) per-side override dropdowns — working copy only.
+  // Later-round (r16/qf/sf/final) per-side override dropdowns — stage into the
+  // working copy only (no re-render; explicit Push applies + renders).
   document.querySelectorAll("[data-gkoside]").forEach(sel=>{
     sel.onchange=()=>{
       const [round,iStr,side]=sel.dataset.gkoside.split("|");
@@ -2978,7 +3017,6 @@ function bindGlobalResults(){
       ST.results.koMatches[round][i][side]=sel.value||"";
       const slot=ST.results.koMatches[round][i];
       if(!slot.home&&!slot.away) delete ST.results.koMatches[round][i]; // fully auto again
-      render();
     };
   });
   // Push a single later-round matchup (both teams) to all pools.

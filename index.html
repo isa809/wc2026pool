@@ -602,6 +602,7 @@ let MOVE_SELECTED=null;
 let MOVE_FROM=null;
 let MOVE_TO=null;
 let MOVE_COMMENTARY="";
+let MOVE_SORT="movers";
 
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
@@ -1945,6 +1946,23 @@ function renderMovement(){
     '<select id="mvTo" class="asel" style="flex:0 0 auto">'+opts(MOVE_TO)+'</select>'+
   '</div>';
 
+  // Sort selector
+  const sortOpts=[
+    ['movers','Biggest movers'],
+    ['rankto','Rank at To date (1st → last)'],
+    ['rankfrom','Rank at From date (1st → last)'],
+    ['moveup','Movement: climbers first'],
+    ['movedown','Movement: fallers first'],
+    ['ptsdesc','Points gained: most first'],
+    ['ptsasc','Points gained: least first']
+  ];
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+    '<label style="font-size:12px;color:var(--muted)">Sort:</label>'+
+    '<select id="mvSort" class="asel" style="flex:0 0 auto">'+
+      sortOpts.map(o=>'<option value="'+o[0]+'"'+(o[0]===MOVE_SORT?" selected":"")+'>'+o[1]+'</option>').join('')+
+    '</select>'+
+  '</div>';
+
   if(MOVE_FROM>=MOVE_TO){
     html+='<div class="notice-red">"To" must be a later day than "From".</div></div>';
     return html;
@@ -1980,10 +1998,18 @@ function renderMovement(){
     // windowPicks = every window match with the player's pick context (display).
     const windowPicks=scored.slice().sort((a,b)=>b.r.pts-a.r.pts);
     return {key:s.key,name:s.name,fromRank:f.rank,toRank:s.rank,rankChange,pointsGained,drivers,windowPicks};
-  }).sort((a,b)=>{
-    if(Math.abs(b.rankChange)!==Math.abs(a.rankChange)) return Math.abs(b.rankChange)-Math.abs(a.rankChange);
-    return b.pointsGained-a.pointsGained;
   });
+  // Display sort (does not affect the commentary, which re-sorts independently).
+  const moveComparators={
+    movers:  (a,b)=>(Math.abs(b.rankChange)-Math.abs(a.rankChange))||(b.pointsGained-a.pointsGained),
+    rankto:  (a,b)=>(a.toRank-b.toRank),                 // current standing, top first
+    rankfrom:(a,b)=>(a.fromRank-b.fromRank),             // prior standing, top first
+    moveup:  (a,b)=>(b.rankChange-a.rankChange)||(b.pointsGained-a.pointsGained), // climbers first
+    movedown:(a,b)=>(a.rankChange-b.rankChange)||(a.pointsGained-b.pointsGained), // fallers first
+    ptsdesc: (a,b)=>(b.pointsGained-a.pointsGained)||(a.toRank-b.toRank),         // most gained first
+    ptsasc:  (a,b)=>(a.pointsGained-b.pointsGained)||(a.toRank-b.toRank)          // least gained first
+  };
+  rows.sort(moveComparators[MOVE_SORT]||moveComparators.movers);
 
   const changedCount=rows.filter(r=>r.rankChange!==0).length;
   const lockstep=changedCount===0;
@@ -2094,6 +2120,8 @@ function bindMovement(){
   if(fromSel) fromSel.onchange=()=>{ MOVE_FROM=parseInt(fromSel.value,10); render(); };
   const toSel=document.getElementById("mvTo");
   if(toSel) toSel.onchange=()=>{ MOVE_TO=parseInt(toSel.value,10); render(); };
+  const sortSel=document.getElementById("mvSort");
+  if(sortSel) sortSel.onchange=()=>{ MOVE_SORT=sortSel.value; render(); };
   const copy=document.getElementById("mvCopy");
   if(copy) copy.onclick=()=>{
     const done=()=>{ const m=document.getElementById("mvCopyMsg"); if(m){ m.textContent="✓ Copied!"; setTimeout(()=>{ if(m) m.textContent=""; },2000); } };

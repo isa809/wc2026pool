@@ -1957,6 +1957,114 @@ function movePickLabel(m,r){
   return r.outcome==="W"?gm.home:gm.away;
 }
 
+/* "Today's matches" — the next unplayed matchday. Walks the full tournament
+   schedule in date order and returns the first day object {label,sort,items}
+   that still has at least one match with no result entered. null if the whole
+   tournament has results. READ-ONLY. */
+function moveNextUnplayedDay(){
+  const sched=buildSchedule();
+  for(const day of sched){
+    const hasUnplayed=day.items.some(it=>
+      it.kind==="group" ? !ST.results.group[it.id] : !ST.results.ko[it.rid+"_"+it.i]
+    );
+    if(hasUnplayed) return day;
+  }
+  return null;
+}
+
+/* Resolve a schedule item to display info {isKo,key,group,time,home,away}. */
+function moveMatchInfo(it){
+  if(it.kind==="group"){
+    const parts=it.id.split("_");
+    return {isKo:false,key:it.id,group:it.g,time:it.time||"",
+            home:GROUPS[it.g][+parts[1]],away:GROUPS[it.g][+parts[2]]};
+  }
+  const teams=getKOMatchTeams(it.rid,it.i);
+  const rLbl={r32:"R32",r16:"R16",qf:"QF",sf:"SF",final:"Final"}[it.rid]||it.rid;
+  return {isKo:true,key:it.rid+"_"+it.i,group:rLbl,time:"",
+          home:teams?teams.home:"TBD",away:teams?teams.away:"TBD"};
+}
+
+/* Pick distribution for one upcoming match: groups every (non-super-admin)
+   player's pick by outcome label. Group: W→home, D→Draw, L→away. KO: the
+   picked team (T3 placeholder resolved). READ-ONLY. */
+function moveTodayMatchData(it){
+  const info=moveMatchInfo(it);
+  const buckets={};   // outcome label -> [display names]
+  let noPick=0;
+  Object.entries(ST.users).forEach(([k,u])=>{
+    if(isSuperAdminEntry(k,u)) return;
+    const picks=getMergedPicks(k);
+    let label=null;
+    if(it.kind==="group"){
+      const p=picks.group[info.key];
+      if(p) label=p==="W"?info.home:p==="D"?"Draw":info.away;
+    } else {
+      const pObj=picks.ko[info.key];
+      let team=pObj?pObj.team:null;
+      if(team==="__t3__") team=picks.ko[info.key+"_t3"]||null;
+      label=team||null;
+    }
+    if(label==null){ noPick++; return; }
+    (buckets[label]=buckets[label]||[]).push(u.displayName||k);
+  });
+  const groups=Object.keys(buckets)
+    .map(label=>({label,names:buckets[label],count:buckets[label].length}))
+    .sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label));
+  return {info,groups,noPick,distinct:groups.length};
+}
+
+/* The "Today's matches — where movement's in play" card. Always reflects the
+   next unplayed matchday, independent of the From/To selectors above it. */
+function renderTodayMatches(){
+  const day=moveNextUnplayedDay();
+  if(!day){
+    return '<div class="card" style="margin-top:12px">'+
+      '<div class="card-title">&#128197; Today\'s matches</div>'+
+      '<div class="notice-blue">No upcoming matches — every scheduled game has a result entered.</div></div>';
+  }
+  const unplayed=day.items.filter(it=>
+    it.kind==="group" ? !ST.results.group[it.id] : !ST.results.ko[it.rid+"_"+it.i]
+  );
+  let html='<div class="card" style="margin-top:12px">'+
+    '<div class="card-title">&#128197; Today\'s matches — where movement\'s in play</div>'+
+    '<div style="font-size:12px;color:var(--muted);margin:-4px 0 8px">'+day.label+
+      ' &middot; '+unplayed.length+' match'+(unplayed.length!==1?'es':'')+' &middot; picks shown, no results yet</div>';
+  unplayed.forEach(it=>{
+    const d=moveTodayMatchData(it),info=d.info;
+    let badge;
+    if(d.distinct>1) badge=_pickBadge('split — movement here','#8a5a00','#faeeda');
+    else if(d.distinct===1) badge=_pickBadge('lockstep','#555','#eef0f3');
+    else badge=_pickBadge('no picks yet','#888','#f2f2f2');
+    html+='<div style="padding:9px 0;border-top:1px solid var(--border)">'+
+      '<div style="font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+        (info.time?'<span style="color:var(--navy);font-size:10px">'+info.time+'</span>':'')+
+        '<span>'+info.home+' <span style="color:var(--muted);font-weight:400">vs</span> '+info.away+'</span>'+
+        '<span style="font-size:10px;color:var(--muted);font-weight:400">'+(info.isKo?info.group:'Group '+info.group)+'</span>'+
+        badge+
+      '</div>';
+    if(d.groups.length){
+      html+='<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">';
+      d.groups.forEach(g=>{
+        const shown=g.names.slice(0,8);
+        let nameStr=shown.join(', ');
+        if(g.names.length>shown.length) nameStr+=', +'+(g.names.length-shown.length);
+        html+='<div style="font-size:12px;line-height:1.4">'+
+          '<span style="font-weight:600">'+g.label+'</span> — '+
+          '<span style="color:var(--muted)">'+nameStr+'</span> '+
+          '<span style="color:var(--navy);font-weight:600">('+g.count+')</span></div>';
+      });
+      html+='</div>';
+      if(d.noPick>0) html+='<div style="font-size:11px;color:var(--muted);margin-top:4px">'+d.noPick+' player'+(d.noPick!==1?'s':'')+': no pick yet</div>';
+    } else {
+      html+='<div style="font-size:12px;color:var(--muted);margin-top:6px;font-style:italic">No picks yet for this match.</div>';
+    }
+    html+='</div>';
+  });
+  html+='</div>';
+  return html;
+}
+
 function openMovement(btn){
   if(btn){btn.disabled=true;btn.textContent="Loading...";}
   if(_updateListener&&CURRENT_POOL_CODE&&db){
@@ -2014,9 +2122,15 @@ function renderMovement(){
     '<div id="mvAnnounceStatus" style="font-size:12px;color:#185fa5;margin-top:6px"></div>'+
   '</div>';
 
+  // "Today's matches" is independent of the From/To comparison, so build it once
+  // and show it in every branch where a pool is selected (below the table).
+  const todayHtml=renderTodayMatches();
+
   const days=moveResultDays();
   if(days.length<2){
-    html+='<div class="notice'+(days.length?'':'-red')+'">Need at least two days with entered results to compare. This pool has '+days.length+'.</div></div>';
+    html+='<div class="notice'+(days.length?'':'-red')+'">Need at least two days with entered results to compare. This pool has '+days.length+'.</div>';
+    html+=todayHtml;
+    html+='</div>';
     return html;
   }
   if(MOVE_FROM===null||!days.some(d=>d.key===MOVE_FROM)) MOVE_FROM=days[days.length-2].key;
@@ -2049,7 +2163,9 @@ function renderMovement(){
   '</div>';
 
   if(MOVE_FROM>=MOVE_TO){
-    html+='<div class="notice-red">"To" must be a later day than "From".</div></div>';
+    html+='<div class="notice-red">"To" must be a later day than "From".</div>';
+    html+=todayHtml;
+    html+='</div>';
     return html;
   }
 
@@ -2156,6 +2272,9 @@ function renderMovement(){
     '</tr>';
   });
   html+='</table></div>';
+
+  // Today's matches — pick distribution for the next unplayed matchday.
+  html+=todayHtml;
 
   // Commentary
   MOVE_COMMENTARY=moveBuildCommentary(lockstep,changedCount,topClimber,biggestFaller,diff,picksBy);

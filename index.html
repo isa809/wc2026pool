@@ -604,6 +604,45 @@ let MOVE_TO=null;
 let MOVE_COMMENTARY="";
 let MOVE_SORT="movers";
 
+/* Optional super-admin announcement banners. GLOBAL_ANNOUNCEMENT is the
+   app-wide message at root /globalAnnouncement (separate listener below); the
+   per-pool message lives at /pools/{code}/announcement and rides the existing
+   pool listener. Empty string = nothing renders. */
+let GLOBAL_ANNOUNCEMENT="";
+let _globalMsgListener=null;
+
+/* Escape user-authored text before injecting into innerHTML. */
+function escapeHtml(s){
+  return String(s==null?"":s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+/* Read /globalAnnouncement is outside the pool node, so the per-pool listener
+   won't catch it — use a dedicated lightweight listener. */
+function listenForGlobalAnnouncement(){
+  if(!db) return;
+  if(_globalMsgListener) db.ref("globalAnnouncement").off("value",_globalMsgListener);
+  _globalMsgListener=db.ref("globalAnnouncement").on("value",snap=>{
+    const next=snap.val()||"";
+    if(next===GLOBAL_ANNOUNCEMENT) return;
+    GLOBAL_ANNOUNCEMENT=next;
+    if(VIEW==="main") render();
+  });
+}
+
+/* Write a single isolated field: the global announcement (null clears it). */
+function setGlobalAnnouncement(text){
+  if(!db) return Promise.resolve();
+  return db.ref("globalAnnouncement").set(text?String(text):null);
+}
+
+/* Write a single isolated field: a pool's announcement (null clears it). */
+function setPoolAnnouncement(poolCode,text){
+  if(!db) return Promise.resolve();
+  return db.ref("pools/"+poolCode+"/announcement").set(text?String(text):null);
+}
+
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
   const p=new URLSearchParams(window.location.search);
@@ -1348,6 +1387,15 @@ function renderSuperAdmin(){
       '<button class="btn btn-navy" id="saMovement" style="width:auto;padding:8px 16px;font-size:13px">&#128202; Movement</button>'+
       '<button class="btn btn-outline" id="saRefresh" style="width:auto;padding:7px 16px;font-size:13px">&#8635; Refresh pools</button>'+
     '</div>'+
+    '<div style="background:#faeeda;border:1px solid #fac775;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="font-size:12px;font-weight:700;color:#854f0b;margin-bottom:6px">📢 Global announcement (below the banner, every pool)</div>'+
+      '<textarea id="saGlobalMsg" placeholder="e.g. Round 2 opens tonight at 8pm ET" style="width:100%;min-height:56px;font-family:inherit;font-size:13px;padding:8px;border:1px solid #e0c089;border-radius:6px;resize:vertical;box-sizing:border-box"></textarea>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'+
+        '<button class="btn-sm" id="saGlobalPost">📢 Post to all pools</button>'+
+        '<button class="btn-sm btn-danger" id="saGlobalClear">✕ Clear global message</button>'+
+      '</div>'+
+      '<div id="saGlobalMsgStatus" style="font-size:12px;color:#854f0b;margin-top:6px"></div>'+
+    '</div>'+
     '<div id="saPoolList"><div style="color:var(--muted);font-size:13px;padding:10px 0">Loading pools...</div></div>'+
   '</div>';
 }
@@ -1539,6 +1587,32 @@ function bindSuperAdmin(){
 
   const moveBtn=document.getElementById("saMovement");
   if(moveBtn) moveBtn.onclick=()=>openMovement(moveBtn);
+
+  // Global announcement box — prefill from the live value, post/clear write the
+  // single /globalAnnouncement field.
+  const gMsg=document.getElementById("saGlobalMsg");
+  const gStatus=document.getElementById("saGlobalMsgStatus");
+  if(gMsg&&db){
+    db.ref("globalAnnouncement").once("value").then(snap=>{ if(document.getElementById("saGlobalMsg")) gMsg.value=snap.val()||""; }).catch(()=>{});
+  }
+  const gPost=document.getElementById("saGlobalPost");
+  if(gPost) gPost.onclick=()=>{
+    const text=(gMsg?gMsg.value:"").trim();
+    if(!text){ if(gStatus){gStatus.textContent="Type a message first (or use Clear).";} return; }
+    showConfirmModal("Post this global announcement to ALL pools? Every player will see it below the banner.",()=>{
+      gPost.disabled=true;
+      setGlobalAnnouncement(text).then(()=>{ if(gStatus){gStatus.textContent="✓ Posted to all pools.";} gPost.disabled=false; })
+        .catch(e=>{ if(gStatus){gStatus.textContent="Error: "+e.message+" (check Firebase rules for /globalAnnouncement)";} gPost.disabled=false; });
+    });
+  };
+  const gClear=document.getElementById("saGlobalClear");
+  if(gClear) gClear.onclick=()=>{
+    showConfirmModal("Clear the global announcement everywhere?",()=>{
+      gClear.disabled=true;
+      setGlobalAnnouncement(null).then(()=>{ if(gMsg) gMsg.value=""; if(gStatus){gStatus.textContent="✓ Cleared.";} gClear.disabled=false; })
+        .catch(e=>{ if(gStatus){gStatus.textContent="Error: "+e.message;} gClear.disabled=false; });
+    });
+  };
 }
 
 /* Open the Global Results screen: detach any per-pool listener, load every
@@ -1929,6 +2003,17 @@ function renderMovement(){
   MOVE_POOLS.forEach(p=>{ html+='<option value="'+p.code+'"'+(p.code===MOVE_SELECTED?" selected":"")+'>'+p.name+' ('+p.code+')</option>'; });
   html+='</select></div>';
 
+  // Per-pool announcement box — appears atop this pool's Standings tab.
+  html+='<div style="background:#e6f1fb;border:1px solid #b5d4f4;border-radius:10px;padding:12px 14px;margin-bottom:12px">'+
+    '<div style="font-size:12px;font-weight:700;color:#185fa5;margin-bottom:6px">📣 Standings message for this pool</div>'+
+    '<textarea id="mvAnnounce" placeholder="e.g. Great shake-up after matchday 2 — check your bracket!" style="width:100%;min-height:54px;font-family:inherit;font-size:13px;padding:8px;border:1px solid #b5d4f4;border-radius:6px;resize:vertical;box-sizing:border-box">'+escapeHtml(ST.announcement||"")+'</textarea>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'+
+      '<button class="btn-sm" id="mvAnnouncePost">📣 Post to Standings</button>'+
+      '<button class="btn-sm btn-danger" id="mvAnnounceClear">✕ Clear</button>'+
+    '</div>'+
+    '<div id="mvAnnounceStatus" style="font-size:12px;color:#185fa5;margin-top:6px"></div>'+
+  '</div>';
+
   const days=moveResultDays();
   if(days.length<2){
     html+='<div class="notice'+(days.length?'':'-red')+'">Need at least two days with entered results to compare. This pool has '+days.length+'.</div></div>';
@@ -2127,6 +2212,30 @@ function bindMovement(){
     const done=()=>{ const m=document.getElementById("mvCopyMsg"); if(m){ m.textContent="✓ Copied!"; setTimeout(()=>{ if(m) m.textContent=""; },2000); } };
     if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(MOVE_COMMENTARY).then(done).catch(done);
     else done();
+  };
+
+  // Per-pool announcement post/clear (writes /pools/{MOVE_SELECTED}/announcement)
+  const aMsg=document.getElementById("mvAnnounce");
+  const aStatus=document.getElementById("mvAnnounceStatus");
+  const aPost=document.getElementById("mvAnnouncePost");
+  if(aPost) aPost.onclick=()=>{
+    const text=(aMsg?aMsg.value:"").trim();
+    if(!text){ if(aStatus){aStatus.textContent="Type a message first (or use Clear).";} return; }
+    if(!MOVE_SELECTED){ return; }
+    aPost.disabled=true;
+    setPoolAnnouncement(MOVE_SELECTED,text).then(()=>{
+      ST.announcement=text; if(CURRENT_POOL) CURRENT_POOL.announcement=text;
+      if(aStatus){aStatus.textContent="✓ Posted to this pool's Standings tab.";} aPost.disabled=false;
+    }).catch(e=>{ if(aStatus){aStatus.textContent="Error: "+e.message;} aPost.disabled=false; });
+  };
+  const aClear=document.getElementById("mvAnnounceClear");
+  if(aClear) aClear.onclick=()=>{
+    if(!MOVE_SELECTED){ return; }
+    aClear.disabled=true;
+    setPoolAnnouncement(MOVE_SELECTED,null).then(()=>{
+      ST.announcement=""; if(CURRENT_POOL) CURRENT_POOL.announcement="";
+      if(aMsg) aMsg.value=""; if(aStatus){aStatus.textContent="✓ Cleared.";} aClear.disabled=false;
+    }).catch(e=>{ if(aStatus){aStatus.textContent="Error: "+e.message;} aClear.disabled=false; });
   };
 }
 
@@ -2470,6 +2579,10 @@ function renderMain(){
     <h1>World Cup 2026</h1>
     <p class="sub">3 Prediction Rounds · 225 pts max</p>
   </div>
+  ${GLOBAL_ANNOUNCEMENT?`<div style="background:#faeeda;border:1px solid #fac775;border-radius:10px;padding:11px 14px;margin:10px 12px 0">
+    <div style="font-size:11px;font-weight:600;color:#854f0b;margin-bottom:3px">📢 Announcement</div>
+    <div style="font-size:14px;color:#854f0b;line-height:1.5;white-space:pre-wrap">${escapeHtml(GLOBAL_ANNOUNCEMENT)}</div>
+  </div>`:""}
   <div class="top-bar">
     <div class="av">${CU.displayName.charAt(0).toUpperCase()}</div>
     <span style="font-weight:600;font-size:15px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${CU.displayName}</span>
@@ -3442,7 +3555,12 @@ function renderLB(){
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
   // You can view other players' predictions only after submitting the current
   // open round yourself (super admin can always view).
-  let html=`<div class="card">`;
+  const announce=(CURRENT_POOL&&CURRENT_POOL.announcement)||ST.announcement||"";
+  let html=announce?`<div style="background:#e6f1fb;border:1px solid #b5d4f4;border-radius:10px;padding:12px 14px;margin-bottom:10px">
+    <div style="font-size:11px;font-weight:600;color:#185fa5;margin-bottom:3px">📣 Pool update</div>
+    <div style="font-size:14px;color:#185fa5;line-height:1.5;white-space:pre-wrap">${escapeHtml(announce)}</div>
+  </div>`:``;
+  html+=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
   html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to expand their predictions &amp; points</div>`;
   scores.forEach((p,i)=>{
@@ -4754,13 +4872,15 @@ function loadPool(code, callback){
       adminKey:data.adminKey||"",
       predRound:data.predRound||1,
       tournament:data.tournament||"active",
-      locked:!!data.locked
+      locked:!!data.locked,
+      announcement:data.announcement||""
     };
     ST.users     =data.users     ||{};
     ST.results   =normResults(data.results);
     ST.adminPin  =data.adminPin  ||"0000";
     ST.predRound =data.predRound ||1;
     ST.tournament=data.tournament||"active";
+    ST.announcement=data.announcement||"";
     ST._adminTab =data._adminTab ||"rounds";
     DB_READY=true;
     callback(null,data);
@@ -4861,6 +4981,7 @@ function loadAllPools(callback){
 let _updateListener=null;
 function listenForUpdates(){
   if(!db||!CURRENT_POOL_CODE) return;
+  listenForGlobalAnnouncement(); // app-wide message lives outside the pool node
   if(_updateListener) db.ref("pools/"+CURRENT_POOL_CODE).off("value",_updateListener);
   _updateListener=db.ref("pools/"+CURRENT_POOL_CODE).on("value",snapshot=>{
     if(!DB_READY) return;
@@ -4868,14 +4989,17 @@ function listenForUpdates(){
     if(!data) return;
     const prevPredRound=ST.predRound;
     const prevTournament=ST.tournament;
+    const prevAnnounce=ST.announcement||"";
     ST.results   =normResults(data.results||ST.results);
     ST.adminPin  =data.adminPin  ||ST.adminPin;
     ST.predRound =data.predRound ||ST.predRound;
     ST.tournament=data.tournament||ST.tournament;
+    ST.announcement=data.announcement||"";
     if(CURRENT_POOL){
       CURRENT_POOL.predRound =ST.predRound;
       CURRENT_POOL.tournament=ST.tournament;
       CURRENT_POOL.locked    =!!data.locked;
+      CURRENT_POOL.announcement=ST.announcement;
     }
     const remoteUsers=data.users||{};
     let ownChanged=false;
@@ -4901,7 +5025,7 @@ function listenForUpdates(){
     });
     // Re-render on round changes (either direction) and admin unlocks so players
     // see a reopened round live, plus the usual standings/results refresh.
-    if(TAB==="lb"||TAB==="results"||ownChanged||prevPredRound!==ST.predRound||prevTournament!==ST.tournament) setTab();
+    if(TAB==="lb"||TAB==="results"||ownChanged||prevPredRound!==ST.predRound||prevTournament!==ST.tournament||prevAnnounce!==ST.announcement) setTab();
     const scoreEl=document.getElementById("scoreDisplay");
     if(scoreEl&&CU) scoreEl.textContent=calcScore(CU.key)+" pts";
   });

@@ -2974,7 +2974,9 @@ function buildSchedule(){
       if(i<0||j<0) return;
       items.push({kind:'group',g:row[1],id:row[1]+'_'+Math.min(i,j)+'_'+Math.max(i,j),time:row[0]});
     });
-    if(items.length) out.push({label:day.d,sort:day.s,items});
+    // Weekday computed from the real date so it can't drift from the calendar
+    // (the hardcoded day.d strings had stale weekdays, e.g. "Wed Jun 11").
+    if(items.length) out.push({label:moveFmtDay(day.s),sort:day.s,items});
   });
   [['r32','Round of 32 · Jun 28–Jul 3',16,Date.UTC(2026,5,28)],['r16','Round of 16 · Jul 4–7',8,Date.UTC(2026,6,4)],
    ['qf','Quarterfinals · Jul 9–11',4,Date.UTC(2026,6,9)],['sf','Semifinals · Jul 14–15',2,Date.UTC(2026,6,14)],

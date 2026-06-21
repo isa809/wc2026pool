@@ -2710,6 +2710,33 @@ function globalKoSchedule(round,i){
   return round==="r32" ? (R32_SCHEDULE[i]||{}) : ((KO_LATER_SCHEDULE[round]||{})[i]||{});
 }
 
+/* Compact slot descriptor: R32 -> seed tags ("2A vs 2B", "1E vs 3A/B/C/D/F");
+   later rounds -> the feeding match winners ("W74 vs W77"). */
+function r32SideTag(side){
+  if(side.t==="W") return "1"+side.g;
+  if(side.t==="R") return "2"+side.g;
+  if(side.t==="T3") return "3"+((side.label||"").replace(/^Best 3rd:\s*/,"").replace(/\s+/g,""));
+  return "?";
+}
+function koSlotDescriptor(round,i){
+  if(round==="r32"){ const s=R32_SEEDS[i]; return s?r32SideTag(s.a)+" vs "+r32SideTag(s.b):""; }
+  const feed=(KO_FEED[round]&&KO_FEED[round][i])||[];
+  const prev=KO_PREV[round];
+  const a=koMatchNumber(prev,feed[0]), b=koMatchNumber(prev,feed[1]);
+  return (a?"W"+a:"?")+" vs "+(b?"W"+b:"?");
+}
+/* The small meta block under each bracket match: schedule line + slot descriptor. */
+function globalKoMetaLine(round,i){
+  const sch=globalKoSchedule(round,i);
+  const mlabel=[sch.m?"M"+sch.m:"",sch.day,sch.time,sch.venue].filter(Boolean).join(" · ");
+  const desc=koSlotDescriptor(round,i);
+  if(!mlabel&&!desc) return "";
+  return '<div style="font-size:8.5px;text-align:center;padding:2px 4px;line-height:1.3;border-top:1px solid var(--border)">'+
+    (mlabel?'<div style="color:var(--muted)">'+mlabel+'</div>':'')+
+    (desc?'<div style="color:var(--navy);font-weight:600">'+desc+'</div>':'')+
+  '</div>';
+}
+
 /* One bracket match for the Global Results visual bracket — mirrors the per-pool
    admin bracket (click a real team to set/clear the winner; the global click
    handler also PUSHES to all pools). A ✎ pencil reveals override dropdowns
@@ -2718,7 +2745,6 @@ function globalKoSchedule(round,i){
 function globalBracketSlotHtml(round,i,actS,aliveTeams){
   const key=round+'_'+i;
   const slot=resolveGlobalKoSlot(round,i,actS);
-  const sch=globalKoSchedule(round,i);
   const res=ST.results.ko[key]||null;
   const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
 
@@ -2735,8 +2761,6 @@ function globalBracketSlotHtml(round,i,actS,aliveTeams){
       '</div>';
   };
 
-  const mlabel=[sch.m?'M'+sch.m:'',sch.day,sch.time,sch.venue].filter(Boolean).join(' · ');
-
   // Override edit form (alive-team dropdowns) — reuses the existing matchup
   // override + push/clear handlers via their data-* attributes.
   const sideAttr=round==="r32"?('data-gr32side="'+i+'|'):('data-gkoside="'+round+'|'+i+'|');
@@ -2752,7 +2776,7 @@ function globalBracketSlotHtml(round,i,actS,aliveTeams){
   return '<div class="brd-match" style="position:relative">'+
       slotSide(slot.home)+
       slotSide(slot.away)+
-      (mlabel?'<div style="font-size:8.5px;color:var(--muted);text-align:center;padding:2px 4px 1px;line-height:1.25;border-top:1px solid var(--border)">'+mlabel+'</div>':'')+
+      globalKoMetaLine(round,i)+
       '<button class="admin-edit-btn" data-gedit-match="'+key+'" title="Override matchup" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;border-radius:4px;opacity:.6">&#9998;</button>'+
       '<div class="admin-edit-form" id="gedit-'+key+'" style="display:none;padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+
         '<div style="font-size:9px;color:var(--muted);margin-bottom:3px">Override matchup (alive teams):</div>'+
@@ -2768,7 +2792,6 @@ function globalBracketSlotHtml(round,i,actS,aliveTeams){
 /* The Final column for the global bracket (champion crown + click-to-set). */
 function globalBracketFinalHtml(actS,aliveTeams){
   const slot=resolveKoLaterSlot('final',0);
-  const sch=globalKoSchedule('final',0);
   const res=ST.results.ko['final_0']||null;
   const ov=(ST.results.koMatches.final&&ST.results.koMatches.final[0])||{};
   const fslot=(s)=>{
@@ -2783,7 +2806,6 @@ function globalBracketFinalHtml(actS,aliveTeams){
         (won?'<span style="font-size:10px;color:#fff;margin-left:4px">&#127942;</span><span class="admin-clear-hint">&#10005; clear</span>':'')+
       '</div>';
   };
-  const mlabel=[sch.m?'M'+sch.m:'',sch.day,sch.time,sch.venue].filter(Boolean).join(' · ');
   const bothReal=slot.home.team&&slot.away.team;
   const hasOverride=!!(ov.home||ov.away);
   return '<div class="brd-col">'+
@@ -2793,7 +2815,7 @@ function globalBracketFinalHtml(actS,aliveTeams){
       '<div class="final-title">Champion</div>'+
       '<div class="final-box" style="position:relative">'+
         fslot(slot.home)+fslot(slot.away)+
-        (mlabel?'<div style="font-size:8.5px;color:var(--muted);text-align:center;padding:2px 4px;line-height:1.25;border-top:1px solid var(--border)">'+mlabel+'</div>':'')+
+        globalKoMetaLine('final',0)+
         '<button class="admin-edit-btn" data-gedit-match="final_0" title="Override matchup" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;opacity:.6">&#9998;</button>'+
         '<div class="admin-edit-form" id="gedit-final_0" style="display:none;padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+
           '<div style="font-size:9px;color:var(--muted);margin-bottom:3px">Override matchup (alive teams):</div>'+

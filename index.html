@@ -1201,42 +1201,27 @@ function resolvePick(draft,baseKey){
   return val;
 }
 
+/* All KO cascades use the corrected real-bracket feed map (KO_FEED) so a user's
+   predicted winners flow forward exactly as the tournament bracket does. */
 function getR16Pairs(draft){
   const pairs=[];
-  const pairings=[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]];
-  pairings.forEach(([x,y])=>{
-    pairs.push({
-      a:resolvePick(draft,'r32_'+x),
-      b:resolvePick(draft,'r32_'+y)
-    });
-  });
+  for(let i=0;i<8;i++){ const f=KO_FEED.r16[i]; pairs.push({a:resolvePick(draft,'r32_'+f[0]),b:resolvePick(draft,'r32_'+f[1])}); }
   return pairs;
 }
 
 function getQFPairs(draft){
   const pairs=[];
-  const pairings=[[0,1],[2,3],[4,5],[6,7]];
-  pairings.forEach(([x,y])=>{
-    pairs.push({
-      a:resolvePick(draft,'r16_'+x),
-      b:resolvePick(draft,'r16_'+y)
-    });
-  });
+  for(let i=0;i<4;i++){ const f=KO_FEED.qf[i]; pairs.push({a:resolvePick(draft,'r16_'+f[0]),b:resolvePick(draft,'r16_'+f[1])}); }
   return pairs;
 }
 
 function getSFPairs(draft){
-  return[
-    {a:resolvePick(draft,'qf_0'),b:resolvePick(draft,'qf_1')},
-    {a:resolvePick(draft,'qf_2'),b:resolvePick(draft,'qf_3')}
-  ];
+  return [0,1].map(i=>{ const f=KO_FEED.sf[i]; return {a:resolvePick(draft,'qf_'+f[0]),b:resolvePick(draft,'qf_'+f[1])}; });
 }
 
 function getFinalPair(draft){
-  return{
-    a:resolvePick(draft,'sf_0'),
-    b:resolvePick(draft,'sf_1')
-  };
+  const f=KO_FEED.final[0];
+  return {a:resolvePick(draft,'sf_'+f[0]),b:resolvePick(draft,'sf_'+f[1])};
 }
 
 /* ══ RENDER ══ */
@@ -3529,6 +3514,7 @@ function renderBracket(draft,locked,pr,meta){
           (bonus&&t3Sel?'<span class="slot-pts" style="color:'+(t3Sel?'#ffd':'var(--gold)')+'">'+bonusTxt+'</span>':'')+
           chip+
         '</div>'+
+        globalKoMetaLine(roundId,idx)+
       '</div>';
     }
 
@@ -3569,6 +3555,7 @@ function renderBracket(draft,locked,pr,meta){
       '<div class="brd-slot '+slotCls(teamB)+(!pending&&!isLocked&&isOpen&&!result?' hoverable':'')+' '+(dis2?'disabled':'')+'" data-ko="'+key+'" data-team="'+(teamB||'')+'">'+
         '<span class="slot-name" title="'+(teamB||'')+'">'+dispB+'</span>'+extraB+
       '</div>'+
+      globalKoMetaLine(roundId,idx)+
     '</div>';
   }
 
@@ -3709,6 +3696,7 @@ function renderBracket(draft,locked,pr,meta){
         '<div class="final-slot '+finalSlotCls(tb)+' '+(fdis?'disabled':'')+'" data-ko="final_0" data-team="'+(tb||'')+'">'+
           '<span class="slot-name" title="'+(tb||'')+'">'+dispFb+'</span>'+fEarned(tb)+
         '</div>'+
+        globalKoMetaLine('final',0)+
       '</div>'+
     '</div>'+
   '</div>';
@@ -3738,10 +3726,8 @@ function getKOMatchTeams(rid,i){
       if(ta&&tb) return{home:ta,away:tb};
     }
   }
-  const cascadePairs={r16:[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]],qf:[[0,1],[2,3],[4,5],[6,7]],sf:[[0,1],[2,3]],final:[[0,1]]};
-  const prevRound={r16:"r32",qf:"r16",sf:"qf",final:"sf"};
-  const pairs=cascadePairs[rid];
-  if(pairs&&pairs[i]){const x=pairs[i][0],y=pairs[i][1],pv=prevRound[rid];const ta=ST.results.ko[pv+"_"+x]||null,tb=ST.results.ko[pv+"_"+y]||null;if(ta||tb) return{home:ta||"TBD",away:tb||"TBD"};}
+  const f=KO_FEED[rid]&&KO_FEED[rid][i];
+  if(f){const pv=KO_PREV[rid];const ta=ST.results.ko[pv+"_"+f[0]]||null,tb=ST.results.ko[pv+"_"+f[1]]||null;if(ta||tb) return{home:ta||"TBD",away:tb||"TBD"};}
   return null;
 }
 
@@ -3969,19 +3955,11 @@ function renderResultsBody(userKey,selfView){
         if(ta&&tb) return{home:ta,away:tb};
       }
     }
-    const cascadePairs={
-      r16:[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]],
-      qf:[[0,1],[2,3],[4,5],[6,7]],
-      sf:[[0,1],[2,3]],
-      final:[[0,1]]
-    };
-    const prevRound={r16:"r32",qf:"r16",sf:"qf",final:"sf"};
-    const pairs=cascadePairs[rid];
-    if(pairs&&pairs[i]){
-      const [x,y]=pairs[i];
-      const pr=prevRound[rid];
-      const ta=ST.results.ko[pr+"_"+x]||null;
-      const tb=ST.results.ko[pr+"_"+y]||null;
+    const f=KO_FEED[rid]&&KO_FEED[rid][i];
+    if(f){
+      const pr=KO_PREV[rid];
+      const ta=ST.results.ko[pr+"_"+f[0]]||null;
+      const tb=ST.results.ko[pr+"_"+f[1]]||null;
       if(ta||tb) return{home:ta||"TBD",away:tb||"TBD"};
     }
     return null;
@@ -4643,41 +4621,16 @@ function renderAdminKnockout(){
       }
     }
 
-    // R16: pairings (0,1),(2,3)... winners from R32
-    const r16pairings=[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15]];
-    r16pairings.forEach(function([x,y],i){
-      // Check if admin manually set
-      const m=(ST.results.koMatches.r16&&ST.results.koMatches.r16[i])||null;
-      if(m&&m.home&&m.away){
-        cascade.r16[i]={home:m.home,away:m.away};
-      } else {
-        const ta=ST.results.ko['r32_'+x]||null;
-        const tb=ST.results.ko['r32_'+y]||null;
-        if(ta||tb) cascade.r16[i]={home:ta||'TBD',away:tb||'TBD',derived:true};
-      }
-    });
-
-    // QF: pairings (0,1),(2,3),(4,5),(6,7) from R16 results
-    [[0,1],[2,3],[4,5],[6,7]].forEach(function([x,y],i){
-      const m=(ST.results.koMatches.qf&&ST.results.koMatches.qf[i])||null;
-      if(m&&m.home&&m.away){
-        cascade.qf[i]={home:m.home,away:m.away};
-      } else {
-        const ta=ST.results.ko['r16_'+x]||null;
-        const tb=ST.results.ko['r16_'+y]||null;
-        if(ta||tb) cascade.qf[i]={home:ta||'TBD',away:tb||'TBD',derived:true};
-      }
-    });
-
-    // SF: pairings (0,1),(2,3) from QF results
-    [[0,1],[2,3]].forEach(function([x,y],i){
-      const m=(ST.results.koMatches.sf&&ST.results.koMatches.sf[i])||null;
-      if(m&&m.home&&m.away){
-        cascade.sf[i]={home:m.home,away:m.away};
-      } else {
-        const ta=ST.results.ko['qf_'+x]||null;
-        const tb=ST.results.ko['qf_'+y]||null;
-        if(ta||tb) cascade.sf[i]={home:ta||'TBD',away:tb||'TBD',derived:true};
+    // R16/QF/SF: derive from previous-round winners via the corrected feed map.
+    [['r16',8],['qf',4],['sf',2]].forEach(function(rd){
+      const round=rd[0], n=rd[1], pv=KO_PREV[round];
+      for(let i=0;i<n;i++){
+        const m=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||null;
+        if(m&&m.home&&m.away){ cascade[round][i]={home:m.home,away:m.away}; continue; }
+        const f=KO_FEED[round][i];
+        const ta=ST.results.ko[pv+'_'+f[0]]||null;
+        const tb=ST.results.ko[pv+'_'+f[1]]||null;
+        if(ta||tb) cascade[round][i]={home:ta||'TBD',away:tb||'TBD',derived:true};
       }
     });
 
@@ -4723,6 +4676,7 @@ function renderAdminKnockout(){
         (aWon?'<span style="font-size:10px;color:#fff;margin-left:4px" title="Click to clear">&#127942;</span>':'')+
         (aWon?'<span class="admin-clear-hint">&#10005; clear</span>':'')+
       '</div>'+
+      globalKoMetaLine(key.split('_')[0],parseInt(key.split('_')[1],10))+
       // Always show edit button so admin can override auto-derived names if needed
       '<button class="admin-edit-btn" data-edit-match="'+key+'" '+
         'title="Edit team names" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;border-radius:4px">'+
@@ -4813,6 +4767,7 @@ function renderAdminKnockout(){
           (faWon?'<span style="font-size:10px;color:#fff;margin-left:4px">&#127942;</span>':'')+
         (faWon?'<span class="admin-clear-hint">&#10005; clear</span>':'')+
         '</div>'+
+        globalKoMetaLine('final',0)+
         '<button class="admin-edit-btn" data-edit-match="final_0" '+
             'style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;border-radius:4px">&#9998;</button>'+
           '<div class="admin-edit-form" id="edit-final_0" style="display:none;padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+

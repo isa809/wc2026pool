@@ -583,6 +583,15 @@ let GLOBAL_POOLS=[];
 let GLOBAL_SAVED_RESULTS=null; /* ST.results stash to restore on exit */
 let GLOBAL_MSG=null; /* {text,ok} flash message that survives a re-render */
 
+/* Super-admin "Submission Times" screen (read-only). SA_SUBMIT toggles it within
+   the VIEW="super" route. SUBMIT_POOLS caches the full pool objects from
+   loadAllPools; SUBMIT_SELECTED is the currently-viewed pool code; SUBMIT_SORT
+   controls row ordering. Nothing here writes to Firebase. */
+let SA_SUBMIT=false;
+let SUBMIT_POOLS=[];
+let SUBMIT_SELECTED=null;
+let SUBMIT_SORT="name";
+
 /* Read ?pool=CODE from URL */
 function getPoolCodeFromURL(){
   const p=new URLSearchParams(window.location.search);
@@ -1065,6 +1074,7 @@ function render(){
   else if(VIEW==="join")   {root.innerHTML=renderJoin();       bindJoin();}
   else if(VIEW==="login")  {root.innerHTML=renderLogin();      bindLogin();}
   else if(VIEW==="super"&&SA_GLOBAL){root.innerHTML=renderGlobalResults(); bindGlobalResults();}
+  else if(VIEW==="super"&&SA_SUBMIT){root.innerHTML=renderSubmitTimes(); bindSubmitTimes();}
   else if(VIEW==="super")  {root.innerHTML=renderSuperAdmin(); bindSuperAdmin();}
   else                     {root.innerHTML=renderMain();       bindMain();}
 }
@@ -1321,6 +1331,7 @@ function renderSuperAdmin(){
     '</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">'+
       '<button class="btn btn-navy" id="saGlobalResults" style="width:auto;padding:8px 16px;font-size:13px">&#9917; Global Results</button>'+
+      '<button class="btn btn-navy" id="saSubmitTimes" style="width:auto;padding:8px 16px;font-size:13px">&#128340; Submission Times</button>'+
       '<button class="btn btn-outline" id="saRefresh" style="width:auto;padding:7px 16px;font-size:13px">&#8635; Refresh pools</button>'+
     '</div>'+
     '<div id="saPoolList"><div style="color:var(--muted);font-size:13px;padding:10px 0">Loading pools...</div></div>'+
@@ -1508,6 +1519,9 @@ function bindSuperAdmin(){
 
   const globalBtn=document.getElementById("saGlobalResults");
   if(globalBtn) globalBtn.onclick=()=>openGlobalResults(globalBtn);
+
+  const submitBtn=document.getElementById("saSubmitTimes");
+  if(submitBtn) submitBtn.onclick=()=>openSubmitTimes(submitBtn);
 }
 
 /* Open the Global Results screen: detach any per-pool listener, load every
@@ -1553,6 +1567,177 @@ function closeGlobalResults(){
   SA_GLOBAL=false; GLOBAL_MSG=null;
   if(GLOBAL_SAVED_RESULTS){ ST.results=GLOBAL_SAVED_RESULTS; GLOBAL_SAVED_RESULTS=null; }
   render();
+}
+
+/* ══ SUBMISSION TIMES (super admin, READ-ONLY) ══
+   Surfaces the timestamps already stored in each user's history. Never writes. */
+
+/* Round 1 deadline = first match kickoff, Mexico vs South Africa,
+   Jun 11 2026 2:00 PM ET (EDT = UTC-4) → 18:00 UTC. */
+const R1_DEADLINE=Date.UTC(2026,5,11,18,0,0);
+
+/* Latest submission ts for a given round (handles resubmissions). */
+function getRoundSubmitTs(user,round){
+  if(!user||!user.history) return null;
+  let latest=null;
+  user.history.forEach(h=>{
+    if(h&&h.predRound===round&&typeof h.ts==="number"){
+      if(latest===null||h.ts>latest) latest=h.ts;
+    }
+  });
+  return latest;
+}
+
+/* Whether a round's latest submission was made by the super admin on behalf. */
+function roundSubmittedBy(user,round){
+  if(!user||!user.history) return null;
+  let latest=null,by=null;
+  user.history.forEach(h=>{
+    if(h&&h.predRound===round&&typeof h.ts==="number"){
+      if(latest===null||h.ts>latest){ latest=h.ts; by=h.submittedBy||null; }
+    }
+  });
+  return by;
+}
+
+/* Format a ms timestamp as Eastern Time (EDT, UTC-4 during the tournament). */
+function fmtSubmitTime(ts){
+  if(!ts) return "—";
+  const et=new Date(ts-4*60*60*1000);
+  const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const mons=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let h=et.getUTCHours(); const m=et.getUTCMinutes();
+  const ampm=h>=12?'PM':'AM'; h=h%12; if(h===0)h=12;
+  const mm=m<10?'0'+m:m;
+  return days[et.getUTCDay()]+' '+mons[et.getUTCMonth()]+' '+et.getUTCDate()+', '+h+':'+mm+' '+ampm+' ET';
+}
+
+/* Open the read-only Submission Times screen. Loads all pools (full objects,
+   incl. users+history) and shows the first by default. */
+function openSubmitTimes(btn){
+  if(btn){btn.disabled=true;btn.textContent="Loading...";}
+  if(_updateListener&&CURRENT_POOL_CODE&&db){
+    db.ref("pools/"+CURRENT_POOL_CODE).off("value",_updateListener);
+    _updateListener=null;
+  }
+  loadAllPools((err,pools)=>{
+    if(err){ showConfirmModal("Error loading pools: "+err,()=>{}); if(btn){btn.disabled=false;btn.innerHTML="&#128340; Submission Times";} return; }
+    SUBMIT_POOLS=pools||[];
+    if(!SUBMIT_SELECTED||!SUBMIT_POOLS.some(p=>p.code===SUBMIT_SELECTED)){
+      SUBMIT_SELECTED=SUBMIT_POOLS.length?SUBMIT_POOLS[0].code:null;
+    }
+    SA_SUBMIT=true;
+    render();
+  });
+}
+
+function closeSubmitTimes(){ SA_SUBMIT=false; render(); }
+
+function renderSubmitTimes(){
+  let html='<div style="padding:16px">'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+      '<button class="btn-sm" id="stBack">&#8592; Back to pools</button>'+
+      '<div style="font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--fifa-blue)">&#128340; Submission Times</div>'+
+    '</div>'+
+    '<div class="notice-blue" style="margin-bottom:12px">Read-only view of when each player submitted each round (Eastern Time). The Round&nbsp;1 deadline is the first kickoff — <strong>Jun 11, 2:00 PM ET</strong>.</div>';
+
+  if(!SUBMIT_POOLS.length){
+    html+='<div class="notice-blue">No pools created yet.</div></div>';
+    return html;
+  }
+
+  // Pool selector
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+    '<label style="font-size:12px;color:var(--muted)">Pool:</label>'+
+    '<select id="stPool" class="asel" style="flex:0 0 auto">';
+  SUBMIT_POOLS.forEach(p=>{
+    html+='<option value="'+p.code+'"'+(p.code===SUBMIT_SELECTED?" selected":"")+'>'+p.name+' ('+p.code+')</option>';
+  });
+  html+='</select>'+
+    '<label style="font-size:12px;color:var(--muted);margin-left:8px">Sort:</label>'+
+    '<select id="stSort" class="asel" style="flex:0 0 auto">'+
+      '<option value="name"'+(SUBMIT_SORT==="name"?" selected":"")+'>Name</option>'+
+      '<option value="r1"'+(SUBMIT_SORT==="r1"?" selected":"")+'>Round 1 (earliest first)</option>'+
+    '</select>'+
+  '</div>';
+
+  const pool=SUBMIT_POOLS.find(p=>p.code===SUBMIT_SELECTED);
+  const users=Object.entries((pool&&pool.users)||{}).filter(([k,u])=>!isSuperAdminEntry(k,u));
+
+  // Summary line (Round 1)
+  let before=0,after=0,notSub=0;
+  users.forEach(([k,u])=>{
+    const ts=getRoundSubmitTs(u,1);
+    if(!ts){ notSub++; return; }
+    if(ts<=R1_DEADLINE) before++; else after++;
+  });
+  html+='<div class="notice'+(after>0?'-red':'')+'" style="margin-bottom:10px">'+
+    '<strong>'+before+'</strong> of <strong>'+users.length+'</strong> player'+(users.length!==1?'s':'')+' submitted Round&nbsp;1 before kickoff. '+
+    '<strong>'+after+'</strong> submitted after.'+(notSub?' <strong>'+notSub+'</strong> not yet submitted.':'')+
+  '</div>';
+
+  // Sort rows
+  const rows=users.slice();
+  if(SUBMIT_SORT==="r1"){
+    rows.sort((a,b)=>{
+      const ta=getRoundSubmitTs(a[1],1), tb=getRoundSubmitTs(b[1],1);
+      if(ta===null&&tb===null) return 0;
+      if(ta===null) return 1; if(tb===null) return -1;
+      return ta-tb;
+    });
+  } else {
+    rows.sort((a,b)=>((a[1].displayName||a[0]).toLowerCase()<(b[1].displayName||b[0]).toLowerCase()?-1:1));
+  }
+
+  // Cell renderer
+  const cell=(u,round)=>{
+    const ts=getRoundSubmitTs(u,round);
+    const by=roundSubmittedBy(u,round);
+    const submittedFlag=u.rounds&&u.rounds[round]&&u.rounds[round].submitted;
+    if(!ts){
+      if(submittedFlag) return '<span style="color:var(--muted)">submitted (no timestamp)</span>';
+      return '<span style="color:var(--muted)">—</span>';
+    }
+    const late=round===1&&ts>R1_DEADLINE;
+    const color=late?'var(--red)':'var(--green)';
+    let s='<span style="color:'+color+';font-weight:500">'+fmtSubmitTime(ts)+'</span>';
+    if(late) s+=' <span style="display:inline-block;background:#b00020;color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;white-space:nowrap">&#9888; after kickoff</span>';
+    if(by) s+=' <span style="font-size:10px;color:var(--muted)">(by '+by+')</span>';
+    return s;
+  };
+
+  html+='<div class="card" style="padding:0;overflow-x:auto">'+
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<tr style="background:#f5f5f2;color:var(--muted)">'+
+        '<th style="text-align:left;padding:8px 10px">Player</th>'+
+        '<th style="text-align:left;padding:8px 10px">Round 1</th>'+
+        '<th style="text-align:left;padding:8px 10px">Round 2</th>'+
+        '<th style="text-align:left;padding:8px 10px">Round 3</th>'+
+      '</tr>';
+  if(!rows.length){
+    html+='<tr><td colspan="4" style="padding:12px;text-align:center;color:var(--muted)">No players in this pool yet.</td></tr>';
+  }
+  rows.forEach(([k,u])=>{
+    html+='<tr style="border-top:1px solid var(--border)">'+
+      '<td style="padding:8px 10px;font-weight:600">'+(u.displayName||k)+'</td>'+
+      '<td style="padding:8px 10px">'+cell(u,1)+'</td>'+
+      '<td style="padding:8px 10px">'+cell(u,2)+'</td>'+
+      '<td style="padding:8px 10px">'+cell(u,3)+'</td>'+
+    '</tr>';
+  });
+  html+='</table></div>';
+
+  html+='</div>';
+  return html;
+}
+
+function bindSubmitTimes(){
+  const back=document.getElementById("stBack");
+  if(back) back.onclick=closeSubmitTimes;
+  const poolSel=document.getElementById("stPool");
+  if(poolSel) poolSel.onchange=()=>{ SUBMIT_SELECTED=poolSel.value; render(); };
+  const sortSel=document.getElementById("stSort");
+  if(sortSel) sortSel.onchange=()=>{ SUBMIT_SORT=sortSel.value; render(); };
 }
 
 /* Cascade of knockout matchups derived from GLOBAL_RESULTS (ST.results while on

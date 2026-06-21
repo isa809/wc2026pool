@@ -1807,12 +1807,21 @@ function standingsAsOf(cutoffDateKey){
   return standings;
 }
 
+/* "Thu Jun 11" from a UTC day key — weekday computed from the real date so it
+   can't drift from the calendar. */
+function moveFmtDay(ms){
+  const d=new Date(ms);
+  const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const mons=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return days[d.getUTCDay()]+' '+mons[d.getUTCMonth()]+' '+d.getUTCDate();
+}
+
 /* Days (sort-key + label) that have at least one entered result. */
 function moveResultDays(){
   const seen={};
   Object.keys(ST.results.group||{}).forEach(k=>{
     const d=matchDateKey(k,false);
-    if(d){ const day=GROUP_SCHED.find(x=>x.s===d); seen[d]=day?day.d:"Group stage"; }
+    if(d) seen[d]=moveFmtDay(d);
   });
   Object.keys(ST.results.ko||{}).forEach(k=>{
     if(k.endsWith("_t3")) return;

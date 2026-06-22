@@ -1746,8 +1746,11 @@ function openGlobalResults(btn){
       Object.keys(r.ko).forEach(k=>{ if(merged.ko[k]===undefined) merged.ko[k]=r.ko[k]; });
       Object.keys(r.koMatches).forEach(rnd=>{
         if(!merged.koMatches[rnd]) merged.koMatches[rnd]=[];
-        const arr=r.koMatches[rnd]||[];
-        arr.forEach((m,i)=>{ if(m&&!merged.koMatches[rnd][i]) merged.koMatches[rnd][i]=m; });
+        // Firebase returns a sparse array as an OBJECT keyed by index (e.g. after
+        // per-slot pushes like results/koMatches/r32/6), so iterate keys to
+        // tolerate both array and object shapes.
+        const arr=r.koMatches[rnd]||{};
+        Object.keys(arr).forEach(i=>{ const m=arr[i]; if(m&&!merged.koMatches[rnd][i]) merged.koMatches[rnd][i]=m; });
       });
     });
     GLOBAL_RESULTS=merged;
@@ -2637,7 +2640,11 @@ function renderGlobalResults(){
       'Enter a result once and push it to <strong>all '+poolCount+' pool'+(poolCount!==1?'s':'')+'</strong> ('+playerCount+' player'+(playerCount!==1?'s':'')+') at once. '+
       'A push writes only that match result to every pool — it never touches anyone&#39;s picks.'+
     '</div>'+
-    '<button class="btn btn-green" id="grPushAll" style="margin-bottom:14px;width:auto;padding:9px 18px;font-size:13px">&#11014; Push ALL entered results to all pools</button>';
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+      '<button class="btn btn-green" id="grPushAll" style="width:auto;padding:9px 18px;font-size:13px">&#11014; Push ALL entered results to all pools</button>'+
+      '<button class="btn btn-danger" id="grClearKo" style="width:auto;padding:9px 18px;font-size:13px">&#128465; Clear ALL knockout results (all pools)</button>'+
+    '</div>'+
+    '<div class="notice" style="margin-bottom:14px">Use <strong>Clear ALL knockout results</strong> to remove every knockout winner and matchup from all pools at once — fixes phantom knockout points during the group stage. It does not touch group results or anyone’s picks.</div>';
 
   // ── Group stage ──────────────────────────────────────────────
   html+='<div class="card"><div class="card-title">Group stage results</div>'+
@@ -2895,6 +2902,25 @@ function pushKoMatchToAllPools(round,i,value,cb){
   }).catch(e=>cb&&cb(e.message));
 }
 
+/* Clear ALL knockout winners (results.ko) and the matchup board
+   (results.koMatches) from EVERY pool in one atomic update. Group results,
+   users, picks, submitted flags, scores, and settings are untouched. Since
+   scores are computed, KO points return to zero once results.ko is empty. */
+function clearAllKnockoutFromAllPools(cb){
+  if(!db){ cb&&cb("Firebase not initialized"); return; }
+  db.ref("pools").once("value").then(snap=>{
+    const pools=snap.val()||{};
+    const codes=Object.keys(pools);
+    if(!codes.length){ cb&&cb(null,0); return; }
+    const updates={};
+    codes.forEach(code=>{
+      updates["pools/"+code+"/results/ko"]=null;
+      updates["pools/"+code+"/results/koMatches"]=null;
+    });
+    return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
+  }).catch(e=>cb&&cb(e.message));
+}
+
 function bindGlobalResults(){
   const back=document.getElementById("grBack");
   if(back) back.onclick=closeGlobalResults;
@@ -3133,6 +3159,21 @@ function bindGlobalResults(){
       pushAllResultsToAllPools((err,n,cnt)=>{
         if(err){ setMsg("Push failed: "+err,false); pushAll.disabled=false; pushAll.innerHTML="&#11014; Push ALL entered results to all pools"; return; }
         setMsg("✓ Pushed "+cnt+" result"+(cnt!==1?"s":"")+" to "+n+" pool"+(n!==1?"s":"")+".",true); render();
+      });
+    });
+  };
+
+  // Clear ALL knockout winners + matchups from every pool (fixes phantom KO points).
+  const clearKo=document.getElementById("grClearKo");
+  if(clearKo) clearKo.onclick=()=>{
+    showConfirmModal('Clear ALL knockout winners AND matchups from all '+poolCount+' pools? This removes every knockout result everywhere (knockout points return to zero). Group results and everyone’s picks are untouched. This cannot be undone.',()=>{
+      clearKo.disabled=true; clearKo.textContent="Clearing...";
+      clearAllKnockoutFromAllPools((err,n)=>{
+        if(err){ setMsg("Clear failed: "+err,false); clearKo.disabled=false; clearKo.innerHTML="&#128465; Clear ALL knockout results (all pools)"; return; }
+        // Reset the working copy so the bracket + standings reflect the clear.
+        ST.results.ko={}; ST.results.koMatches={};
+        setMsg("✓ Cleared all knockout results + matchups from "+n+" pool"+(n!==1?"s":"")+". Knockout points are now zero.",true);
+        render();
       });
     });
   };

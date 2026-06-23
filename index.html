@@ -1537,7 +1537,9 @@ function bindSuperAdmin(){
         const userCount=Object.keys(pool.users||{}).length;
         const statusColor=pool.tournament==="done"?"var(--green)":"var(--fifa-blue-mid)";
         const isLocked=!!pool.locked;
+        const isSandbox=!!pool.sandbox;
         const lockBadge=isLocked?'&nbsp;·&nbsp;<span style="color:var(--red);font-weight:600">&#128274; Locked</span>':'';
+        const sandboxBadge=isSandbox?'&nbsp;·&nbsp;<span style="color:var(--navy);font-weight:700">&#129514; Sandbox</span>':'';
         html+=
           '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px" data-pool-card="'+pool.code+'">'+
             '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'+
@@ -1547,7 +1549,7 @@ function bindSuperAdmin(){
                   'Code: <strong>'+pool.code+'</strong> &nbsp;·&nbsp; '+
                   userCount+' player'+(userCount!==1?"s":"")+'&nbsp;·&nbsp;'+
                   '<span style="color:'+statusColor+'">Round '+pool.predRound+(pool.tournament==="done"?" · Complete":""  )+'</span>'+
-                  lockBadge+
+                  lockBadge+sandboxBadge+
                 '</div>'+
                 '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+
                   'Join pwd: <strong>'+(pool.joinPassword||"—")+'</strong>'+
@@ -1556,6 +1558,7 @@ function bindSuperAdmin(){
               '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
                 '<button class="btn-sm" data-enter-pool="'+pool.code+'">&#9654; Enter</button>'+
                 '<button class="btn-sm'+(isLocked?'':' btn-danger')+'" data-lock-pool="'+pool.code+'" data-locked="'+(isLocked?"1":"0")+'">'+(isLocked?'&#128275; Unlock joining':'&#128274; Lock joining')+'</button>'+
+                '<button class="btn-sm'+(isSandbox?' btn-navy':'')+'" data-sandbox-pool="'+pool.code+'" data-sandbox="'+(isSandbox?"1":"0")+'">'+(isSandbox?'&#129514; Sandbox: ON':'&#129514; Mark sandbox')+'</button>'+
                 '<button class="btn-sm" data-rename-pool="'+pool.code+'" data-pool-name="'+pool.name+'">&#9998; Rename</button>'+
                 '<button class="btn-sm btn-danger" data-delete-pool="'+pool.code+'">&#128465; Delete</button>'+
               '</div>'+
@@ -1618,6 +1621,32 @@ function bindSuperAdmin(){
             } else {
               const pools=LS.get("pools")||{};
               if(pools[code]) pools[code].locked=willLock;
+              LS.set("pools",pools); done();
+            }
+          });
+        };
+      });
+
+      // ── Mark pool as Sandbox (Global Results ignores it: never reads its
+      //    results, never pushes to it — so it's a safe local tester) ─────
+      el.querySelectorAll("[data-sandbox-pool]").forEach(btn=>{
+        btn.onclick=()=>{
+          const code=btn.dataset.sandboxPool;
+          const willSandbox=btn.dataset.sandbox!=="1";
+          const card=el.querySelector("[data-pool-card='"+code+"']");
+          const name=card?card.querySelector("[style*='font-weight:700']").textContent:code;
+          const msg=willSandbox
+            ?'Mark "'+name+'" as a Sandbox? Global Results will ignore it — it won’t read this pool’s results and global pushes won’t touch it. Use it to test freely. Its own picks/results are unchanged.'
+            :'Remove Sandbox from "'+name+'"? Global Results will read and push to it again like a normal pool.';
+          showConfirmModal(msg,()=>{
+            btn.disabled=true; btn.textContent="Saving...";
+            const done=()=>renderPoolList();
+            if(IS_FIREBASE_CONFIGURED&&db){
+              db.ref("pools/"+code+"/sandbox").set(willSandbox).then(done)
+                .catch(e=>{ btn.disabled=false; showConfirmModal("Error: "+e.message,()=>{}); });
+            } else {
+              const pools=LS.get("pools")||{};
+              if(pools[code]) pools[code].sandbox=willSandbox;
               LS.set("pools",pools); done();
             }
           });
@@ -1735,10 +1764,13 @@ function openGlobalResults(btn){
   loadAllPools((err,pools)=>{
     if(err){ showConfirmModal("Error loading pools: "+err,()=>{}); if(btn){btn.disabled=false;btn.innerHTML="&#9917; Global Results";} return; }
     pools=pools||[];
+    // Sandbox pools are isolated testers: Global Results never reads from or
+    // pushes to them, so exclude them from the targets and the seed merge.
+    pools=pools.filter(p=>!p.sandbox);
     GLOBAL_POOLS=pools.map(p=>({code:p.code,name:p.name,players:Object.keys(p.users||{}).filter(k=>k!=="u_superadmin").length}));
-    // Seed working copy from the union of all pools' results. Since results are
-    // meant to be identical across pools (kept in sync via global push), taking
-    // the first non-empty value per match key reflects the canonical result.
+    // Seed working copy from the union of all (non-sandbox) pools' results. Since
+    // results are meant to be identical across pools (kept in sync via global
+    // push), taking the first non-empty value per match key reflects canon.
     const merged={group:{},ko:{},koMatches:{}};
     pools.forEach(p=>{
       const r=normResults(p.results);
@@ -2852,7 +2884,7 @@ function pushResultToAllPools(type,key,value,cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools);
+    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
     const updates={};
     codes.forEach(code=>{ updates["pools/"+code+"/results/"+type+"/"+key]=value; });
     return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
@@ -2866,7 +2898,7 @@ function pushAllResultsToAllPools(cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools);
+    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
     const updates={};
     // Only push matchup slots that actually have both teams set.
     const km=ST.results.koMatches||{};
@@ -2895,7 +2927,7 @@ function pushKoMatchToAllPools(round,i,value,cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools);
+    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
     const updates={};
     codes.forEach(code=>{ updates["pools/"+code+"/results/koMatches/"+round+"/"+i]=value; });
     return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
@@ -2910,7 +2942,7 @@ function clearAllKnockoutFromAllPools(cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools);
+    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
     if(!codes.length){ cb&&cb(null,0); return; }
     const updates={};
     codes.forEach(code=>{

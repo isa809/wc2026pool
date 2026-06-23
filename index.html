@@ -1109,6 +1109,22 @@ function koBonusRound(userKey,roundId,team){
   return null;
 }
 
+/* Which team in an ACTUAL knockout matchup (home vs away) did the player back to
+   advance in this round? Picks are stored by slot key under the cascade as it
+   looked when the pick was made, but the real matchup is re-derived from results
+   — so the slot-key pick can be a team that isn't even in this match. We instead
+   show the team the player predicted to advance, team-based (consistent with
+   scoring): the one of home/away that is in their merged round winners. Prefers
+   the actual winner if they somehow backed both; null if they backed neither. */
+function koPickedSide(userKey,roundId,home,away,winner){
+  const hOk=home&&home!=="TBD"&&koBonusRound(userKey,roundId,home)!=null;
+  const aOk=away&&away!=="TBD"&&koBonusRound(userKey,roundId,away)!=null;
+  if(hOk&&aOk) return winner===away?away:home;
+  if(hOk) return home;
+  if(aOk) return away;
+  return null;
+}
+
 function calcScore(userKey){
   const picks=getMergedPicks(userKey);
   let pts=0;
@@ -3988,8 +4004,10 @@ function koPickRow(mp,rid,i,userKey){
   const teams=getKOMatchTeams(rid,i);
   const home=teams?teams.home:'TBD',away=teams?teams.away:'TBD';
   const res=ST.results.ko[key]||null;
-  const pObj=mp.ko[key]||null;
-  const pick=pObj?(pObj.team==='__t3__'?(mp.ko[key+'_t3']||null):pObj.team):null;
+  // Team-based pick: which of the two ACTUAL matchup teams did the player back to
+  // advance this round? (Re-derived so the shown pick belongs to this match and
+  // agrees with the team-based scoring — see koPickedSide.)
+  const pick=koPickedSide(userKey,rid,home,away,res);
   const rLbl={r32:'R32',r16:'R16',qf:'QF',sf:'SF',final:'Final'}[rid]||rid;
   const top='<div style="font-size:12px;font-weight:600">'+home+' <span style="color:var(--muted);font-weight:400">vs</span> '+away+
     '<span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:6px">'+rLbl+'</span></div>';
@@ -3998,7 +4016,11 @@ function koPickRow(mp,rid,i,userKey){
   else inner+='<span style="font-size:10px;color:var(--muted);font-style:italic">No pick</span>';
   if(res){
     inner+=_pickBadge('Winner: '+res,'#444','#eef0f3');
-    if(pick){ const sc=SC.ko[rid];const br=koBonusRound(userKey,rid,res);const mx=sc.base+(br?(sc.bonus[br-1]||0):0);const pts=(pick===res&&br)?mx:0; inner+=_ptsTag(pts); }
+    // Points follow the team and key off the result (mirrors calcScore): the
+    // winner scores iff the player backed it to advance this round.
+    const sc=SC.ko[rid];const br=koBonusRound(userKey,rid,res);
+    const pts=br?sc.base+(sc.bonus[br-1]||0):0;
+    inner+=_ptsTag(pts);
   } else inner+='<span style="font-size:10px;color:var(--muted)">TBD</span>';
   return _matchShell(top,inner);
 }
@@ -4138,17 +4160,20 @@ function renderResultsBody(userKey,selfView){
     const teams=getMatchTeams(rid,i);
     const home=teams?teams.home:"";
     const away=teams?teams.away:"";
-    const myPick=mp.ko[key]||null;
-    const myPickTeam=myPick?(myPick.team==="__t3__"?(mp.ko[key+"_t3"]||null):myPick.team):null;
+    // "Picked this team to advance" is team-based: a team is the player's pick
+    // for this match iff it's in their merged round winners (koBonusRound != null).
+    // The stored slot-key pick can point at a team not even in the real matchup,
+    // so we don't use it here — this keeps the display aligned with scoring.
+    function pickedToAdvance(team){ return !!(team&&team!=="TBD"&&koBonusRound(userKey,rid,team)!=null); }
 
     function slotPts(team){
-      if(!myPick||!team) return null;
+      if(!team||team==="TBD") return null;
       const sc=SC.ko[rid];
       const base=sc.base;
       // Bonus follows the team across rounds (matches calcScore/koScoreMeta).
       const br=koBonusRound(userKey,rid,team);
       const bonus=br?(sc.bonus[br-1]||0):0;
-      const isPicked=myPickTeam===team;
+      const isPicked=br!=null;
       const isCorrect=res&&res===team;
       if(isPicked&&isCorrect) return{base,bonus,total:base+bonus,correct:true,bonusRound:br};
       if(isPicked&&res&&!isCorrect) return{base:0,bonus:0,total:0,correct:false,missed:true,bonusRound:br};
@@ -4159,7 +4184,7 @@ function renderResultsBody(userKey,selfView){
     function buildSlot(team,isHome){
       if(!team) return '<div class="brd-slot disabled"><span class="slot-name"><em style="color:var(--muted);font-size:10px">TBD</em></span></div>';
       const won=res&&res===team;
-      const picked=myPickTeam===team;
+      const picked=pickedToAdvance(team);
       const wrong=res&&picked&&!won;
       const pts=slotPts(team);
       let cls="brd-slot";
@@ -4241,7 +4266,7 @@ function renderResultsBody(userKey,selfView){
   function finalSlot(team){
     if(!team) return '<div class="final-slot disabled"><span class="slot-name"><em style="color:var(--muted);font-size:10px">TBD</em></span></div>';
     const won=fres&&fres===team;
-    const picked=fmyPickTeam===team;
+    const picked=koBonusRound(userKey,"final",team)!=null; // team-based, matches scoring
     const wrong=fres&&picked&&fres!==team;
     const fsc=SC.ko["final"];
     const base=fsc.base;

@@ -563,6 +563,17 @@ const KO_FEED={
   sf:{0:[0,1],1:[2,3]},
   final:{0:[0,1]}
 };
+/* R32 VISUAL display order only: each R16 match's two feeders grouped together,
+   in R16-slot order, so R32→R16 feeders sit adjacent on screen. Derived from
+   KO_FEED.r16 so it always tracks the real cascade. NB: this changes ONLY the
+   top-to-bottom render sequence — slot keys, picks, scoring, and cascade still
+   use the true slot index carried by each entry. Expected:
+   [2,5,0,3,1,4,6,7,11,10,9,8,14,13,12,15]. */
+const R32_DISPLAY_ORDER=(function(){
+  const order=[];
+  for(let r16=0;r16<8;r16++){ const f=KO_FEED.r16[r16]; if(f) f.forEach(idx=>order.push(idx)); }
+  return order;
+})();
 /* Date/time/venue for the later rounds, keyed by round + slot index. */
 const KO_LATER_SCHEDULE={
   r16:{
@@ -2897,7 +2908,12 @@ function renderGlobalKnockoutBracket(actS,aliveTeams){
   const roundSlots={r32:16,r16:8,qf:4,sf:2};
   roundIds.forEach(function(rid){
     let col='';
-    for(let i=0;i<roundSlots[rid];i++){ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); }
+    if(rid==='r32'){
+      // R32 visual order groups feeders by their R16 match; true slot index preserved.
+      R32_DISPLAY_ORDER.forEach(i=>{ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); });
+    } else {
+      for(let i=0;i<roundSlots[rid];i++){ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); }
+    }
     html+='<div class="brd-col"><div class="brd-col-title">'+roundLabels[rid]+'<span class="pts">+'+SC.ko[rid].base+' pts</span></div><div class="brd-matches">'+col+'</div></div>';
   });
   html+=globalBracketFinalHtml(actS,aliveTeams);
@@ -3669,7 +3685,8 @@ function renderBracket(draft,locked,pr,meta){
   // admin's group results — shared by all users and overriding R1 predictions.
   const actualR32=isR1?null:buildActualR32Matchups();
   let r32html='';
-  for(let i=0;i<16;i++){
+  // R32 visual order groups feeders by their R16 match; `i` is the TRUE slot index.
+  for(const i of R32_DISPLAY_ORDER){
     let ta=null,tb=null,pendingLabelA=null,pendingLabelB=null;
     let t3CandA=null,t3CandB=null,isT3A=false,isT3B=false;
     if(isR1){
@@ -3877,7 +3894,9 @@ function buildSchedule(){
    ['qf','Quarterfinals · Jul 9–11',4,Date.UTC(2026,6,9)],['sf','Semifinals · Jul 14–15',2,Date.UTC(2026,6,14)],
    ['final','The Final · Jul 19',1,Date.UTC(2026,6,19)]].forEach(r=>{
     const items=[];
-    for(let i=0;i<r[2];i++){ if(getKOMatchTeams(r[0],i)||ST.results.ko[r[0]+'_'+i]) items.push({kind:'ko',rid:r[0],i}); }
+    // R32 visits feeders grouped by R16 match; `i` stays the TRUE slot index.
+    const seq=r[0]==='r32'?R32_DISPLAY_ORDER:Array.from({length:r[2]},(_,k)=>k);
+    seq.forEach(i=>{ if(getKOMatchTeams(r[0],i)||ST.results.ko[r[0]+'_'+i]) items.push({kind:'ko',rid:r[0],i}); });
     if(items.length) out.push({label:r[1],sort:r[3],items});
   });
   out.sort((a,b)=>a.sort-b.sort);
@@ -4151,12 +4170,14 @@ function renderResultsBody(userKey,selfView){
   roundDefs.forEach(function(rd){
     let colHtml="";
     let hasAny=false;
-    for(let i=0;i<rd.slots;i++){
+    // R32 visual order groups feeders by their R16 match; `i` is the TRUE slot index.
+    const seq=rd.id==='r32'?R32_DISPLAY_ORDER:Array.from({length:rd.slots},(_,k)=>k);
+    seq.forEach(function(i){
       const teams=getMatchTeams(rd.id,i);
       const res=ST.results.ko[rd.id+"_"+i]||null;
       if(teams||res){hasAny=true;}
       colHtml+=resultSlot(rd.id,i);
-    }
+    });
     if(hasAny) cols.push({id:rd.id,label:rd.label,html:colHtml});
   });
 

@@ -23,12 +23,12 @@
   SCORING (max 225 pts)
   ──────────────────────
   Group: +2 correct / +2 draw / -1 wrong   → 96 pts max
-  R32:   +3 base, no early-pick bonus       → 48 pts max
-  R16:   +3 base + +2 if first picked in R1 → 40 pts max
-  QF:    +3 base + +2 if first picked in R1 → 20 pts max
-  SF:    +3 base + +2 if first picked in R1 → 10 pts max
-  Final: +6 base + +5 R1 / +3 R2 bonus      → 11 pts max
-  (early-pick bonus follows the TEAM, not the slot key)
+  R32:   +3 base + +1 if first picked in R1 → 64 pts max
+  R16:   +3 base + +1 if first picked in R1 → 32 pts max
+  QF:    +3 base + +1 if first picked in R1 → 16 pts max
+  SF:    +3 base + +1 if first picked in R1 →  8 pts max
+  Final: +6 base + +3 R1 / +2 R2 bonus      →  9 pts max
+  (base = latest pick; bonus follows the TEAM, not the slot key)
 
   PREDICTION ROUNDS
   ─────────────────
@@ -470,23 +470,24 @@ if(IS_FIREBASE_CONFIGURED){
 const SC={
   groupCorrect:2,groupDraw:2,groupWrong:-1,
   ko:{
-    r32:  {base:3,bonus:[0,0,0]},   // flat 3 — R32 is always a Round 1 call (no bonus)
-    r16:  {base:3,bonus:[2,0,0]},   // +2 if the team was first picked in R1, else base
-    qf:   {base:3,bonus:[2,0,0]},   // +2 if first picked in R1
-    sf:   {base:3,bonus:[2,0,0]},   // +2 if first picked in R1
-    final:{base:6,bonus:[5,3,0]}    // +5 R1 / +3 R2 / base only if first in R3
+    r32:  {base:3,bonus:[1,0,0]},   // +1 if the team was first picked in R1
+    r16:  {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
+    qf:   {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
+    sf:   {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
+    final:{base:6,bonus:[3,2,0]}    // +3 R1 / +2 R2 / base only if first in R3
   }
 };
 /* SCORING SUMMARY (max 225 pts)
    Group: +2 correct | +2 draw | -1 wrong   → max 96
-   R32:   +3 base, no early-pick bonus       → max 48 (3 × 16)
-   R16:   +3 base + +2 if first picked in R1 → max 40 (5 × 8)
-   QF:    +3 base + +2 if first picked in R1 → max 20 (5 × 4)
-   SF:    +3 base + +2 if first picked in R1 → max 10 (5 × 2)
-   Final: +6 base + +5 R1 / +3 R2 bonus      → max 11 (6+5 × 1)
-   TOTAL MAX: 96 + 48 + 40 + 20 + 10 + 11 = 225 pts
-   The early-pick bonus follows the TEAM, not the slot: "did you pick this team
-   to win this round, and how early?" — see koBonusRound. */
+   R32:   +3 base + +1 if first picked in R1 → max 64 (4 × 16)
+   R16:   +3 base + +1 if first picked in R1 → max 32 (4 × 8)
+   QF:    +3 base + +1 if first picked in R1 → max 16 (4 × 4)
+   SF:    +3 base + +1 if first picked in R1 → max  8 (4 × 2)
+   Final: +6 base + +3 R1 / +2 R2 bonus      → max  9 (6+3 × 1)
+   TOTAL MAX: 96 + 64 + 32 + 16 + 8 + 9 = 225 pts
+   BASE follows the player's LATEST (merged) pick; BONUS follows the TEAM and how
+   EARLY they committed — "did you pick this team to win this round, and how
+   early?" — slot-key independent. See koBonusRound. */
 
 /* Open ko rounds per prediction round */
 const PR_OPEN={1:["r32","r16","qf","sf","final"],2:["r32","r16","qf","sf","final"],3:["final"]};
@@ -2329,21 +2330,18 @@ function moveCurrentStandings(){
    Mirrors calcScore EXACTLY (group: correct=groupCorrect, correct draw=groupDraw,
    wrong=groupWrong; KO: base+bonus on a hit, 0 otherwise; no pick = 0).
    outcome: group -> "W"|"D"|"L"; ko -> the advancing team name. */
-function moveHypoPoints(picks,it,outcome){
+function moveHypoPoints(userKey,picks,it,outcome){
   if(it.kind==="group"){
     const p=picks.group[it.id];
     if(!p) return 0;
     return p===outcome ? (outcome==="D"?SC.groupDraw:SC.groupCorrect) : SC.groupWrong;
   }
-  const key=it.rid+"_"+it.i;
-  const pObj=picks.ko[key];
-  if(!pObj) return 0;
-  let team=pObj.team;
-  if(team==="__t3__") team=picks.ko[key+"_t3"]||null;
-  if(!team) return 0;
   const sc=SC.ko[it.rid];
   if(!sc) return 0;
-  return team===outcome ? sc.base+(sc.bonus[(pObj.round||1)-1]||0) : 0;
+  // Team-based, exactly like calcScore: if `outcome` (the hypothetical winner) is
+  // in the player's merged round winners, they earn base + earliest-pick bonus.
+  const br=koBonusRound(userKey,it.rid,outcome);
+  return br ? sc.base+(sc.bonus[br-1]||0) : 0;
 }
 
 /* Possible outcomes for one upcoming match. Group -> W/D/L; KO -> each
@@ -2418,8 +2416,8 @@ function renderOpportunities(){
     const levers=[];
     matches.forEach(it=>{
       moveMatchOutcomes(it).forEach(out=>{
-        const aD=moveHypoPoints(picksBy[A.key],it,out.o);
-        const bD=moveHypoPoints(picksBy[B.key],it,out.o);
+        const aD=moveHypoPoints(A.key,picksBy[A.key],it,out.o);
+        const bD=moveHypoPoints(B.key,picksBy[B.key],it,out.o);
         const newGap=gap+(bD-aD);
         if(newGap<=0 && newGap<gap){
           levers.push({it,o:out.o,newGap,aPick:movePickName(picksBy[A.key],it),bPick:movePickName(picksBy[B.key],it)});
@@ -4485,7 +4483,7 @@ function renderScoring(){
     '<div class="card-title">Point system &mdash; max 225 pts</div>'+
 
     '<div class="notice-blue" style="margin-bottom:14px">'+
-      '<strong>&#127942; Early pick bonus follows the TEAM:</strong> the question is "did you pick this team to win this round, and how early?" If a team you backed wins its match, you earn base points &mdash; plus an early-pick bonus if you had that same team for that round in an earlier prediction round. R32 is a flat +3 (no bonus); R16/QF/SF give +2 for a Round 1 call; the Final rewards an early champion most.'+
+      '<strong>&#127942; Early pick bonus follows the TEAM:</strong> the question is "did you pick this team to win this round, and how early?" If a team you backed wins its match, you earn base points &mdash; plus an early-pick bonus if you had that same team for that round in an earlier prediction round. R32/R16/QF/SF give +1 for a Round 1 call; the Final rewards an early champion most (+3 R1 / +2 R2).'+
     '</div>'+
 
     '<table class="scoring-table">'+
@@ -4519,38 +4517,38 @@ function renderScoring(){
 
         '<tr style="border-top:2px solid var(--fifa-blue)"><td><strong>Round of 32</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">3</td>'+
-          '<td style="text-align:center;font-weight:600">48</td></tr>'+
+          '<td style="text-align:center;font-weight:600">4</td>'+
+          '<td style="text-align:center;font-weight:600">64</td></tr>'+
 
         '<tr><td><strong>Round of 16</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">5</td>'+
-          '<td style="text-align:center;font-weight:600">40</td></tr>'+
+          '<td style="text-align:center;font-weight:600">4</td>'+
+          '<td style="text-align:center;font-weight:600">32</td></tr>'+
 
         '<tr><td><strong>Quarterfinals</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">5</td>'+
-          '<td style="text-align:center;font-weight:600">20</td></tr>'+
+          '<td style="text-align:center;font-weight:600">4</td>'+
+          '<td style="text-align:center;font-weight:600">16</td></tr>'+
 
         '<tr><td><strong>Semifinals</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">5</td>'+
-          '<td style="text-align:center;font-weight:600">10</td></tr>'+
+          '<td style="text-align:center;font-weight:600">4</td>'+
+          '<td style="text-align:center;font-weight:600">8</td></tr>'+
 
         '<tr style="border-top:2px solid var(--fifa-gold)"><td><strong>The Final</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+6</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:700">+5</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+3</td>'+
-          '<td style="text-align:center;font-weight:600">11</td>'+
-          '<td style="text-align:center;font-weight:600">11</td></tr>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:700">+3</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
+          '<td style="text-align:center;font-weight:600">9</td>'+
+          '<td style="text-align:center;font-weight:600">9</td></tr>'+
 
         '<tr style="background:linear-gradient(135deg,var(--fifa-blue),var(--fifa-blue-mid))">'+
           '<td style="color:#fff;font-weight:700;font-family:Bebas Neue,sans-serif;font-size:14px;letter-spacing:.06em">TOTAL MAX</td>'+
@@ -4563,11 +4561,10 @@ function renderScoring(){
     '<div style="margin-top:14px;padding:12px;background:var(--navygl);border-radius:8px;border-left:3px solid var(--fifa-gold)">'+
       '<div style="font-size:12px;font-weight:600;color:var(--fifa-blue);margin-bottom:6px">&#128161; How the early pick bonus works</div>'+
       '<div style="font-size:12px;color:var(--muted);line-height:1.7">'+
-        '<div>&#9917; <strong>Round of 32:</strong> flat <strong>+3</strong>, no early-pick bonus &mdash; the R32 field is already set by the time Round 2 opens.</div>'+
-        '<div>&#9989; <strong>R16 / QF / SF:</strong> had Brazil for that round back in <strong>Round 1</strong> and Brazil wins its match &rarr; <strong>+3 base + 2 early pick = 5 pts</strong>. First picked them in Round 2 &rarr; <strong>+3 base only</strong>.</div>'+
+        '<div>&#9989; <strong>R32 / R16 / QF / SF:</strong> had Brazil for that round back in <strong>Round 1</strong> and Brazil wins its match &rarr; <strong>+3 base + 1 early pick = 4 pts</strong>. First picked them in Round 2 &rarr; <strong>+3 base only</strong>.</div>'+
         '<div>&#128308; <strong>Abandoned a team?</strong> If you picked Brazil in R1 but switched to France in R2, Brazil earns you nothing &mdash; only your final pick counts. France then scores as a Round 2 pick (base only).</div>'+
-        '<div>&#127942; <strong>The Final:</strong> champion picked in R1 = <strong>+6 + 5 = 11</strong>, first in R2 = <strong>+6 + 3 = 9</strong>, first in R3 = <strong>+6 base only</strong>.</div>'+
-        '<div>&#128081; The bonus follows the <strong>team</strong>, not a bracket slot &mdash; even if the matchups shift, your early call on a team still counts.</div>'+
+        '<div>&#127942; <strong>The Final:</strong> champion picked in R1 = <strong>+6 + 3 = 9</strong>, first in R2 = <strong>+6 + 2 = 8</strong>, first in R3 = <strong>+6 base only</strong>.</div>'+
+        '<div>&#128081; <strong>Base</strong> follows your latest pick; the <strong>bonus</strong> follows the <strong>team</strong>, not a bracket slot &mdash; even if the matchups shift, your early call on a team still counts.</div>'+
       '</div>'+
     '</div>'+
   '</div>';

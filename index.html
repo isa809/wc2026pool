@@ -574,6 +574,24 @@ const R32_DISPLAY_ORDER=(function(){
   for(let r16=0;r16<8;r16++){ const f=KO_FEED.r16[r16]; if(f) f.forEach(idx=>order.push(idx)); }
   return order;
 })();
+/* QF VISUAL display order only: order each QF match by the display position of
+   its R16 feeders, so every QF sits next to the R16 matches that feed it. This
+   swaps M98 (qf slot 1, feeds R16 4&5) and M99 (qf slot 2, feeds R16 2&3) on
+   screen. Derived from KO_FEED.qf so it tracks the real cascade. As with R32,
+   slot keys/picks/scoring still use the TRUE slot index each entry carries.
+   Expected: [0,2,1,3]. */
+const QF_DISPLAY_ORDER=(function(){
+  const order=Object.keys(KO_FEED.qf).map(Number);
+  order.sort((a,b)=>Math.min.apply(null,KO_FEED.qf[a])-Math.min.apply(null,KO_FEED.qf[b]));
+  return order;
+})();
+/* Display sequence (top-to-bottom render order) for any KO round. R32 and QF
+   are reordered for feeder adjacency; all other rounds render in slot order. */
+function koDisplaySeq(rid,slots){
+  if(rid==='r32') return R32_DISPLAY_ORDER;
+  if(rid==='qf') return QF_DISPLAY_ORDER;
+  return Array.from({length:slots},(_,k)=>k);
+}
 /* Date/time/venue for the later rounds, keyed by round + slot index. */
 const KO_LATER_SCHEDULE={
   r16:{
@@ -2908,12 +2926,8 @@ function renderGlobalKnockoutBracket(actS,aliveTeams){
   const roundSlots={r32:16,r16:8,qf:4,sf:2};
   roundIds.forEach(function(rid){
     let col='';
-    if(rid==='r32'){
-      // R32 visual order groups feeders by their R16 match; true slot index preserved.
-      R32_DISPLAY_ORDER.forEach(i=>{ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); });
-    } else {
-      for(let i=0;i<roundSlots[rid];i++){ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); }
-    }
+    // R32/QF reordered for feeder adjacency; `i` stays the TRUE slot index.
+    koDisplaySeq(rid,roundSlots[rid]).forEach(i=>{ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); });
     html+='<div class="brd-col"><div class="brd-col-title">'+roundLabels[rid]+'<span class="pts">+'+SC.ko[rid].base+' pts</span></div><div class="brd-matches">'+col+'</div></div>';
   });
   html+=globalBracketFinalHtml(actS,aliveTeams);
@@ -3726,7 +3740,8 @@ function renderBracket(draft,locked,pr,meta){
   const qfOpen=open.includes('qf')&&!locked;
   let qfhtml='';
   const qfPairs=getQFPairs(draft);
-  for(let i=0;i<4;i++){
+  // QF visual order places each QF next to its R16 feeders; `i` is the TRUE slot index.
+  for(const i of QF_DISPLAY_ORDER){
     let ta=null,tb=null;
     const adminM=getAdminMatch('qf',i);
     if(adminM){ta=adminM.home;tb=adminM.away;}
@@ -3894,8 +3909,8 @@ function buildSchedule(){
    ['qf','Quarterfinals · Jul 9–11',4,Date.UTC(2026,6,9)],['sf','Semifinals · Jul 14–15',2,Date.UTC(2026,6,14)],
    ['final','The Final · Jul 19',1,Date.UTC(2026,6,19)]].forEach(r=>{
     const items=[];
-    // R32 visits feeders grouped by R16 match; `i` stays the TRUE slot index.
-    const seq=r[0]==='r32'?R32_DISPLAY_ORDER:Array.from({length:r[2]},(_,k)=>k);
+    // R32/QF visit reordered for feeder adjacency; `i` stays the TRUE slot index.
+    const seq=koDisplaySeq(r[0],r[2]);
     seq.forEach(i=>{ if(getKOMatchTeams(r[0],i)||ST.results.ko[r[0]+'_'+i]) items.push({kind:'ko',rid:r[0],i}); });
     if(items.length) out.push({label:r[1],sort:r[3],items});
   });
@@ -4170,8 +4185,8 @@ function renderResultsBody(userKey,selfView){
   roundDefs.forEach(function(rd){
     let colHtml="";
     let hasAny=false;
-    // R32 visual order groups feeders by their R16 match; `i` is the TRUE slot index.
-    const seq=rd.id==='r32'?R32_DISPLAY_ORDER:Array.from({length:rd.slots},(_,k)=>k);
+    // R32/QF visual order groups matches by feeder adjacency; `i` is the TRUE slot index.
+    const seq=koDisplaySeq(rd.id,rd.slots);
     seq.forEach(function(i){
       const teams=getMatchTeams(rd.id,i);
       const res=ST.results.ko[rd.id+"_"+i]||null;

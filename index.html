@@ -689,6 +689,7 @@ let VIEWING=null,VIEWING_ROUND=1;
 let RESULTS_VIEW="round";
 const EXPANDED={};
 const PLAYER_VIEW={};
+const PLAYER_BR_ROUND={}; // per-inspected-player KO bracket round (1|2); default R2
 
 /* Super-admin "Global Results" screen (push one result to ALL pools at once).
    SA_GLOBAL toggles the screen within the VIEW="super" route. GLOBAL_RESULTS is
@@ -4119,10 +4120,32 @@ function groupResultCards(mp){
 /* A player's by-round view for the Standings panel: their PREDICTED bracket
    (exactly what they'd see in My Picks — cascades R32→Final, picks highlighted,
    per-slot points once results are in) plus the group-stage result cards. */
+/* [R1][R2] segmented toggle for the inspected player's knockout bracket. */
+function brRoundToggle(userKey,sel,hasR2){
+  const btn=(val,label,disabled)=>'<button data-brround="'+userKey+':'+val+'"'+(disabled?' disabled':'')+
+    ' style="flex:1;border:none;padding:5px 12px;font-size:11px;font-weight:600;font-family:inherit;cursor:'+(disabled?'not-allowed':'pointer')+';'+
+    (sel===val?'background:var(--navy);color:#fff':'background:transparent;color:'+(disabled?'var(--muted)':'var(--navy)'))+'">'+label+'</button>';
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 4px">'+
+    '<span style="font-size:11px;color:var(--muted);font-weight:600">Bracket:</span>'+
+    '<div style="display:flex;border:1px solid var(--navy);border-radius:7px;overflow:hidden">'+
+      btn(1,'R1',false)+btn(2,'R2',!hasR2)+
+    '</div>'+
+    '<span style="font-size:10px;color:var(--muted)">Showing Round '+sel+' picks'+(!hasR2?' &middot; no Round 2 submitted yet':'')+'</span>'+
+  '</div>';
+}
+
 function renderPlayerByRound(userKey){
   const mp=getMergedPicks(userKey);
-  const draft={group:mp.group||{},ko:mp.ko||{}};
-  return groupResultCards(mp)+renderBracket(draft,true,ST.predRound,koScoreMeta(userKey));
+  const u=ST.users[userKey];
+  // KO bracket round toggle: default R2 (the latest/governing bracket); fall back
+  // to R1 if the player hasn't submitted Round 2. Group card always stays merged.
+  const hasR2=!!(u&&u.rounds&&u.rounds[2]&&u.rounds[2].submitted&&u.rounds[2].picks);
+  let sel=PLAYER_BR_ROUND[userKey];
+  if(sel==null) sel=hasR2?2:1;
+  if(sel===2&&!hasR2) sel=1;
+  const roundKo=(u&&u.rounds&&u.rounds[sel]&&u.rounds[sel].picks&&u.rounds[sel].picks.ko)||{};
+  const draft={group:mp.group||{},ko:roundKo};
+  return groupResultCards(mp)+brRoundToggle(userKey,sel,hasR2)+renderBracket(draft,true,ST.predRound,koScoreMeta(userKey));
 }
 
 function renderResults(){
@@ -5313,7 +5336,7 @@ function bindTab(){
 
   /* standings → expand/collapse a player's inline pick panel */
   document.querySelectorAll("[data-expand-user]").forEach(row=>{
-    row.onclick=()=>{ const k=row.dataset.expandUser; EXPANDED[k]=!EXPANDED[k]; setTab(); };
+    row.onclick=()=>{ const k=row.dataset.expandUser; EXPANDED[k]=!EXPANDED[k]; if(EXPANDED[k]) delete PLAYER_BR_ROUND[k]; setTab(); };
   });
   /* per-player panel sub-toggle (By round / By date) — re-render only that panel body */
   document.querySelectorAll("[data-pview]").forEach(b=>{
@@ -5328,6 +5351,17 @@ function bindTab(){
         x.style.background=on?"var(--navy)":"transparent";
         x.style.color=on?"#fff":"var(--navy)";
       });
+    };
+  });
+  /* per-player KO bracket R1/R2 toggle — re-render only that panel body */
+  document.querySelectorAll("[data-brround]").forEach(b=>{
+    b.onclick=(e)=>{
+      e.stopPropagation();
+      if(b.disabled) return;
+      const parts=b.dataset.brround.split(":"); const k=parts[0], rnd=+parts[1];
+      PLAYER_BR_ROUND[k]=rnd;
+      const body=document.getElementById("lbpanelbody_"+k);
+      if(body) body.innerHTML=renderPlayerByRound(k);
     };
   });
 

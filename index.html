@@ -3969,6 +3969,16 @@ function _ptsTag(pts){
   const pos=pts>0;
   return '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;margin-left:auto;color:'+(pos?'var(--green)':pts<0?'var(--red)':'var(--muted)')+';background:'+(pos?'#e8f5ee':pts<0?'#fdecea':'#eef0f3')+'">'+(pos?'+':'')+pts+' pts</span>';
 }
+/* Knockout points tag broken into base + early-pick bonus. `br` is the bonus
+   round from koBonusRound (the same source calcScore uses); null/0 → not credited,
+   so fall back to the standard "0 pts" treatment. base + bonus always equals the
+   match's scored total. */
+function _koPtsTag(rid,br){
+  if(!br) return _ptsTag(0);
+  const sc=SC.ko[rid];const bonus=sc.bonus[br-1]||0;const total=sc.base+bonus;
+  const txt='+'+sc.base+' base'+(bonus>0?' <span style="opacity:.85">+'+bonus+' R'+br+' bonus</span>':'');
+  return '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;margin-left:auto;color:var(--green);background:#e8f5ee" title="'+total+' pts total">'+txt+'</span>';
+}
 function _matchShell(top,inner){
   return '<div style="padding:6px 2px;border-bottom:1px solid var(--border)">'+top+'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px">'+inner+'</div></div>';
 }
@@ -4015,10 +4025,10 @@ function koPickRow(mp,rid,i,userKey){
   if(res){
     inner+=_pickBadge('Winner: '+res,'#444','#eef0f3');
     // Points follow the team and key off the result (mirrors calcScore): the
-    // winner scores iff the player backed it to advance this round.
-    const sc=SC.ko[rid];const br=koBonusRound(userKey,rid,res);
-    const pts=br?sc.base+(sc.bonus[br-1]||0):0;
-    inner+=_ptsTag(pts);
+    // winner scores iff the player backed it to advance this round. Shown as the
+    // base + early-pick bonus split.
+    const br=koBonusRound(userKey,rid,res);
+    inner+=_koPtsTag(rid,br);
   } else inner+='<span style="font-size:10px;color:var(--muted)">TBD</span>';
   return _matchShell(top,inner);
 }

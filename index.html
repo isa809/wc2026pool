@@ -5441,7 +5441,7 @@ function bindTab(){
       const parts=b.dataset.pview.split(":"); const k=parts[0], mode=parts[1];
       PLAYER_VIEW[k]=mode;
       const body=document.getElementById("lbpanelbody_"+k);
-      if(body) body.innerHTML=(mode==="date"?renderByDate(k):renderPlayerByRound(k));
+      if(body){ body.innerHTML=(mode==="date"?renderByDate(k):renderPlayerByRound(k)); wireBrRound(body); }
       document.querySelectorAll('[data-pview^="'+k+':"]').forEach(x=>{
         const on=x.dataset.pview===k+":"+mode;
         x.style.background=on?"var(--navy)":"transparent";
@@ -5449,18 +5449,23 @@ function bindTab(){
       });
     };
   });
-  /* R1/R2/R3 knockout toggle — re-render the standings panel body, or the whole
-     Results tab when shown there (no panel body). Fully bidirectional. */
-  document.querySelectorAll("[data-brround]").forEach(b=>{
-    b.onclick=(e)=>{
-      e.stopPropagation();
-      const parts=b.dataset.brround.split(":"); const k=parts[0], rnd=+parts[1];
-      PLAYER_BR_ROUND[k]=rnd;
-      const body=document.getElementById("lbpanelbody_"+k);
-      if(body) body.innerHTML=renderPlayerByRound(k);
-      else setTab();
-    };
-  });
+  /* R1/R2/R3 knockout toggle — bidirectional. After re-rendering the standings
+     panel body we must RE-WIRE the freshly-rendered toggle buttons (they live
+     inside the replaced body), otherwise the toggle sticks after one switch.
+     In the Results tab there's no panel body → re-render the whole tab. */
+  function wireBrRound(scope){
+    (scope||document).querySelectorAll("[data-brround]").forEach(b=>{
+      b.onclick=(e)=>{
+        e.stopPropagation();
+        const parts=b.dataset.brround.split(":"); const k=parts[0], rnd=+parts[1];
+        PLAYER_BR_ROUND[k]=rnd;
+        const body=document.getElementById("lbpanelbody_"+k);
+        if(body){ body.innerHTML=renderPlayerByRound(k); wireBrRound(body); }
+        else setTab();
+      };
+    });
+  }
+  wireBrRound(document);
 
   /* admin unlock */
   const apBtn=document.getElementById("apBtn");

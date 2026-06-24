@@ -4117,42 +4117,138 @@ function groupResultCards(mp){
   return groupHtml;
 }
 
-/* A player's by-round view for the Standings panel: their PREDICTED bracket
-   (exactly what they'd see in My Picks — cascades R32→Final, picks highlighted,
-   per-slot points once results are in) plus the group-stage result cards. */
-/* [R1][R2] segmented toggle for the inspected player's knockout bracket. */
-function brRoundToggle(userKey,sel,hasR2){
-  const btn=(val,label,disabled)=>'<button data-brround="'+userKey+':'+val+'"'+(disabled?' disabled':'')+
-    ' style="flex:1;border:none;padding:5px 12px;font-size:11px;font-weight:600;font-family:inherit;cursor:'+(disabled?'not-allowed':'pointer')+';'+
-    (sel===val?'background:var(--navy);color:#fff':'background:transparent;color:'+(disabled?'var(--muted)':'var(--navy)'))+'">'+label+'</button>';
-  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 4px">'+
-    '<span style="font-size:11px;color:var(--muted);font-weight:600">Bracket:</span>'+
+/* ── Shared R1/R2/R3 knockout round toggle + per-round render formats ──
+   R1 = pill list (team fate from actual results), R2 = full bracket, R3 =
+   champion pick. Used by both the Standings player panel and the Results view. */
+const KO_ROUND_SLOTS={r32:16,r16:8,qf:4,sf:2,final:1};
+/* A round is available to view if it has ANY knockout picks — independent of the
+   `submitted` flag, so entered-but-unsubmitted picks still display. */
+function koRoundHasPicks(userKey,r){
+  const u=ST.users[userKey];
+  const ko=u&&u.rounds&&u.rounds[r]&&u.rounds[r].picks&&u.rounds[r].picks.ko;
+  return !!ko&&Object.keys(ko).some(k=>!k.endsWith('_t3'));
+}
+/* Selected round for a user: explicit toggle state, else default R2 (latest full
+   bracket), else R1 if R2 is empty. */
+function brSelRound(userKey){
+  let sel=PLAYER_BR_ROUND[userKey];
+  if(sel==null) sel=koRoundHasPicks(userKey,2)?2:(koRoundHasPicks(userKey,1)?1:2);
+  return sel;
+}
+/* Teams that ACTUALLY won a match in round R (from recorded results). */
+function koActualWinners(R){
+  const s=new Set();const n=KO_ROUND_SLOTS[R]||0;
+  for(let i=0;i<n;i++){const w=ST.results.ko[R+'_'+i];if(w)s.add(w);}
+  return s;
+}
+/* Teams that ACTUALLY reached round R (participants of round-R matches, derived
+   from real results via getKOMatchTeams). decidedOnly → only matches with a result. */
+function koActualParticipants(R,decidedOnly){
+  const s=new Set();const n=KO_ROUND_SLOTS[R]||0;
+  for(let i=0;i<n;i++){
+    if(decidedOnly&&!ST.results.ko[R+'_'+i]) continue;
+    const t=getKOMatchTeams(R,i);
+    if(t){ if(t.home&&t.home!=='TBD')s.add(t.home); if(t.away&&t.away!=='TBD')s.add(t.away); }
+  }
+  return s;
+}
+
+/* [R1][R2][R3] segmented toggle (bidirectional, all rounds always selectable). */
+function brRoundToggle(userKey,sel){
+  const btn=(val,label)=>'<button data-brround="'+userKey+':'+val+'" style="flex:1;border:none;padding:5px 14px;font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;'+
+    (sel===val?'background:var(--navy);color:#fff':'background:transparent;color:var(--navy)')+'">'+label+'</button>';
+  const cap={1:'Round 1 picks',2:'Round 2 bracket',3:'Round 3 champion'}[sel]||'';
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 6px">'+
+    '<span style="font-size:11px;color:var(--muted);font-weight:600">Knockout:</span>'+
     '<div style="display:flex;border:1px solid var(--navy);border-radius:7px;overflow:hidden">'+
-      btn(1,'R1',false)+btn(2,'R2',!hasR2)+
+      btn(1,'R1')+btn(2,'R2')+btn(3,'R3')+
     '</div>'+
-    '<span style="font-size:10px;color:var(--muted)">Showing Round '+sel+' picks'+(!hasR2?' &middot; no Round 2 submitted yet':'')+'</span>'+
+    '<span style="font-size:10px;color:var(--muted)">Showing '+cap+'</span>'+
   '</div>';
 }
 
-function renderPlayerByRound(userKey){
-  const mp=getMergedPicks(userKey);
+/* R1 view: pill list of the user's Round 1 KO picks, grouped by round, colored by
+   what actually happened to each team relative to that round. Points on winning
+   pills come from the same koBonusRound the leaderboard uses. */
+function renderR1Pills(userKey){
   const u=ST.users[userKey];
-  // KO bracket round toggle: default R2 (the latest/governing bracket); fall back
-  // to R1 if the player hasn't submitted Round 2. Group card always stays merged.
-  const hasR2=!!(u&&u.rounds&&u.rounds[2]&&u.rounds[2].submitted&&u.rounds[2].picks);
-  let sel=PLAYER_BR_ROUND[userKey];
-  if(sel==null) sel=hasR2?2:1;
-  if(sel===2&&!hasR2) sel=1;
-  const roundKo=(u&&u.rounds&&u.rounds[sel]&&u.rounds[sel].picks&&u.rounds[sel].picks.ko)||{};
-  const draft={group:mp.group||{},ko:roundKo};
-  return groupResultCards(mp)+brRoundToggle(userKey,sel,hasR2)+renderBracket(draft,true,ST.predRound,koScoreMeta(userKey));
+  const ko=(u&&u.rounds&&u.rounds[1]&&u.rounds[1].picks&&u.rounds[1].picks.ko)||{};
+  const rounds=[['r32','Round of 32'],['r16','Round of 16'],['qf','Quarterfinals'],['sf','Semifinals'],['final','The Final']];
+  let body='',any=false;
+  rounds.forEach(function(rr){
+    const R=rr[0],label=rr[1];
+    const seen=new Set(),teams=[];
+    Object.keys(ko).forEach(function(key){
+      if(key.endsWith('_t3')||key.split('_')[0]!==R) return;
+      let t=ko[key]; t=(t&&typeof t==='object')?t.team:t; if(t==='__t3__')t=ko[key+'_t3']||null;
+      if(t&&!seen.has(t)){seen.add(t);teams.push(t);}
+    });
+    if(!teams.length) return;
+    any=true;
+    const won=koActualWinners(R),reached=koActualParticipants(R,false),decided=koActualParticipants(R,true);
+    const sc=SC.ko[R];
+    let pills='';
+    teams.forEach(function(team){
+      let bg='transparent',color='var(--muted)',border='var(--border)',icon='',extra='';
+      if(won.has(team)){
+        const br=koBonusRound(userKey,R,team);const pts=br?sc.base+(sc.bonus[br-1]||0):0;
+        bg='#e8f5ee';color='var(--green)';border='#bfe6cf';icon='&#10003; ';
+        extra=pts?' <b>+'+pts+'</b>':'';
+      } else if(reached.has(team)){
+        if(decided.has(team)){bg='#fdecea';color='var(--red)';border='#f5c6c0';icon='&#10007; ';}
+        else {bg='#eef0f3';color='var(--muted)';border='var(--border)';extra=' <span style="opacity:.7">TBD</span>';}
+      }
+      pills+='<span style="display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:3px 9px;border-radius:11px;color:'+color+';background:'+bg+';border:1px solid '+border+'">'+icon+team+extra+'</span>';
+    });
+    body+='<div style="font-size:11px;font-weight:700;color:var(--navy);margin:8px 0 4px">'+label+'</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">'+pills+'</div>';
+  });
+  if(!any) return '<div class="card" style="margin-top:12px"><div class="card-title">Round 1 knockout picks</div><div class="notice-blue" style="margin-bottom:0">No Round 1 knockout picks.</div></div>';
+  body+='<div style="font-size:10px;color:var(--muted);margin-top:8px">&#10003; won this round (+pts) &middot; &#10007; reached but lost &middot; grey = out earlier &middot; TBD = not played yet</div>';
+  return '<div class="card" style="margin-top:12px"><div class="card-title">Round 1 knockout picks</div>'+body+'</div>';
 }
+
+/* R3 view: the user's ultimate champion pick. */
+function renderR3Champion(userKey){
+  const u=ST.users[userKey];
+  const ko=(u&&u.rounds&&u.rounds[3]&&u.rounds[3].picks&&u.rounds[3].picks.ko)||{};
+  let t=ko['final_0']; t=(t&&typeof t==='object')?t.team:t; if(t==='__t3__')t=ko['final_0_t3']||null;
+  const wrap=inner=>'<div class="card" style="margin-top:12px"><div class="card-title">Round 3 — Champion</div>'+inner+'</div>';
+  if(!t) return wrap('<div class="notice-blue" style="margin-bottom:0">No champion pick submitted yet.</div>');
+  const fres=ST.results.ko['final_0']||null;
+  let line='';
+  if(fres&&fres===t){const br=koBonusRound(userKey,'final',t);const pts=br?SC.ko.final.base+(SC.ko.final.bonus[br-1]||0):0;
+    line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:6px">&#10003; Correct champion'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
+  else if(fres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:6px">&#10007; '+fres+' won the title</div>';}
+  return wrap('<div style="font-size:15px;font-weight:700;color:var(--navy)">&#127942; Ultimate champion pick: '+t+'</div>'+line);
+}
+
+/* Render the knockout section for the selected round (pills / bracket / champion). */
+function renderKoForRound(userKey,sel){
+  if(sel===1) return renderR1Pills(userKey);
+  if(sel===3) return renderR3Champion(userKey);
+  if(!koRoundHasPicks(userKey,2)) return '<div class="card" style="margin-top:12px"><div class="card-title">Round 2 bracket</div><div class="notice-blue" style="margin-bottom:0">No Round 2 picks yet.</div></div>';
+  const mp=getMergedPicks(userKey);
+  const ko=ST.users[userKey].rounds[2].picks.ko||{};
+  const draft={group:mp.group||{},ko:ko};
+  return renderBracket(draft,true,ST.predRound,koScoreMeta(userKey));
+}
+
+/* Shared "by round" view: group-stage result cards + R1/R2/R3 toggle + the
+   selected round's knockout view. Used in both Standings and Results. */
+function renderKoRoundView(userKey){
+  const mp=getMergedPicks(userKey);
+  const sel=brSelRound(userKey);
+  return groupResultCards(mp)+brRoundToggle(userKey,sel)+renderKoForRound(userKey,sel);
+}
+
+function renderPlayerByRound(userKey){ return renderKoRoundView(userKey); }
 
 function renderResults(){
   // Feature: chronological "By date" alternative to the existing by-round view.
   const toggle=viewToggle(RESULTS_VIEW,'data-results-view');
   if(RESULTS_VIEW==="date") return toggle+renderByDate(CU.key);
-  return toggle+renderResultsBody(CU.key,true);
+  return toggle+renderKoRoundView(CU.key);
 }
 
 /* The original Results view — group-stage cards (with pick/result/points chips)
@@ -5353,15 +5449,16 @@ function bindTab(){
       });
     };
   });
-  /* per-player KO bracket R1/R2 toggle — re-render only that panel body */
+  /* R1/R2/R3 knockout toggle — re-render the standings panel body, or the whole
+     Results tab when shown there (no panel body). Fully bidirectional. */
   document.querySelectorAll("[data-brround]").forEach(b=>{
     b.onclick=(e)=>{
       e.stopPropagation();
-      if(b.disabled) return;
       const parts=b.dataset.brround.split(":"); const k=parts[0], rnd=+parts[1];
       PLAYER_BR_ROUND[k]=rnd;
       const body=document.getElementById("lbpanelbody_"+k);
       if(body) body.innerHTML=renderPlayerByRound(k);
+      else setTab();
     };
   });
 

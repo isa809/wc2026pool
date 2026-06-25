@@ -5254,7 +5254,7 @@ function renderAdminPlayers(){
   };
   let html=`<div class="card">
     <div class="card-title">Player management</div>
-    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.${isSuper?' &mdash; <strong>Submit R1</strong> locks Round 1 for a player who made picks but hasn&rsquo;t submitted.':''}</div>`;
+    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.${isSuper?' &mdash; <strong>Submit R1/R2/Final</strong> locks that round for a player who made picks but missed the submit button (only flips the flag; never changes picks).':''}</div>`;
 
   if(!users.length){
     html+=`<p style="font-size:13px;color:var(--muted);padding:10px 0">No players registered yet.</p>`;
@@ -5263,18 +5263,21 @@ function renderAdminPlayers(){
       const score=calcScore(key);
       const subs=[1,2,3].map(r=>getUserRound(key,r).submitted);
       const lbl=r=>r===3?'Final':'R'+r;
-      const r1Picks=pickCount(u,1);
-      // R1 chip: locked ✅ when submitted; greyed ✅ when picks exist but not yet
-      // submitted; empty ⭕ when nothing has been picked.
-      const r1Chip=subs[0]
-        ? '<span style="color:var(--green)">R1&#9989;</span>'
-        : (r1Picks>0
-            ? '<span style="color:var(--muted);opacity:.5" title="Picks made, not yet submitted">R1&#9989;</span>'
-            : '<span style="color:var(--muted)">R1&#9711;</span>');
-      // Super admin only: submit-on-behalf for a player with R1 picks but no submit.
-      const submitR1Btn=(isSuper&&!subs[0]&&r1Picks>0)
-        ? `<button class="btn-sm" data-submitr1="${key}" title="Submit &amp; lock this player's Round 1 picks for them" style="border-color:var(--fifa-gold);color:#7a5c10;background:#fdf6e3">Submit R1</button>`
-        : '';
+      // Chips for all three rounds: green ✅ submitted · greyed ✅ picks made but
+      // not submitted · empty ⭕ nothing picked.
+      const chips=[1,2,3].map(r=>{
+        const tag=r===3?'R3':'R'+r, n=pickCount(u,r);
+        if(subs[r-1]) return '<span style="color:var(--green)">'+tag+'&#9989;</span>';
+        if(n>0) return '<span style="color:var(--muted);opacity:.5" title="Picks made, not yet submitted">'+tag+'&#9989;</span>';
+        return '<span style="color:var(--muted)">'+tag+'&#9711;</span>';
+      }).join('&nbsp;');
+      // Super admin: submit-on-behalf for ANY open round the player has picks in
+      // but hasn't submitted (R1/R2/R3). Only flips the submitted flag.
+      const submitBtns=isSuper?[1,2,3].map(r=>{
+        if(subs[r-1]||ST.predRound<r||pickCount(u,r)===0) return '';
+        const rl=r===3?'Final':'Round '+r, lab=r===3?'Final':'R'+r;
+        return `<button class="btn-sm" data-submit-round="${key}:${r}" title="Submit &amp; lock this player's ${rl} picks for them" style="border-color:var(--fifa-gold);color:#7a5c10;background:#fdf6e3">Submit ${lab}</button>`;
+      }).join(''):'';
       // Unlock controls — only for rounds the player has actually submitted.
       let unlockBtns='';
       subs.forEach((s,i)=>{
@@ -5285,13 +5288,9 @@ function renderAdminPlayers(){
         <div class="av">${u.displayName.charAt(0).toUpperCase()}</div>
         <div style="flex:1;min-width:120px">
           <div style="font-size:13px;font-weight:600">${u.displayName}</div>
-          <div style="font-size:11px;color:var(--muted)">${score} pts &nbsp;
-            ${r1Chip}&nbsp;
-            ${subs[1]?'<span style="color:var(--green)">R2&#9989;</span>':'<span style="color:var(--muted)">R2&#9711;</span>'}&nbsp;
-            ${subs[2]?'<span style="color:var(--green)">R3&#9989;</span>':'<span style="color:var(--muted)">R3&#9711;</span>'}
-          </div>
+          <div style="font-size:11px;color:var(--muted)">${score} pts &nbsp;${chips}</div>
         </div>
-        ${submitR1Btn}
+        ${submitBtns}
         <input type="password" placeholder="New PIN" maxlength="4"
           id="pin_${key}" style="width:90px;margin:0;padding:5px 8px;font-size:12px"/>
         <button class="btn-sm" data-resetpin="${key}">Reset PIN</button>
@@ -5827,24 +5826,27 @@ function bindTab(){
     };
   });
 
-  /* super admin: submit Round 1 on behalf of a player who made picks but
-     hasn't submitted. Only flips the submitted flag — never alters picks. */
-  document.querySelectorAll("[data-submitr1]").forEach(btn=>{
+  /* super admin: submit any round (R1/R2/R3) on behalf of a player who made
+     picks but hasn't submitted. Only flips the submitted flag — never alters
+     picks. (Some players make picks but miss the submit button.) */
+  document.querySelectorAll("[data-submit-round]").forEach(btn=>{
     btn.onclick=()=>{
-      const key=btn.dataset.submitr1;
+      const [key,rStr]=btn.dataset.submitRound.split(":");
+      const r=parseInt(rStr,10);
       const u=ST.users[key];
       const msg=document.getElementById("playerMsg");
       const fail=t=>{ if(msg){msg.className="err";msg.textContent=t;} };
       const name=(u&&u.displayName)||key;
-      if(!u||!u.rounds||!u.rounds[1]){ fail(name+" has no Round 1 data to submit."); return; }
-      if(u.rounds[1].submitted===true){ fail(name+" has already submitted Round 1."); return; }
-      const picks=u.rounds[1].picks||{};
+      const rLbl=r===3?"Final Pick":"Round "+r;
+      if(!u||!u.rounds||!u.rounds[r]){ fail(name+" has no "+rLbl+" data to submit."); return; }
+      if(u.rounds[r].submitted===true){ fail(name+" has already submitted "+rLbl+"."); return; }
+      const picks=u.rounds[r].picks||{};
       const n=(picks.group?Object.keys(picks.group).length:0)+(picks.ko?Object.keys(picks.ko).length:0);
-      if(n===0){ fail(name+" has no Round 1 picks to submit."); return; }
-      showConfirmModal("Submit Round 1 picks for "+name+"? Their picks will be locked.",function(){
-        u.rounds[1].submitted=true;
+      if(n===0){ fail(name+" has no "+rLbl+" picks to submit."); return; }
+      showConfirmModal("Submit "+rLbl+" picks for "+name+"? Their picks will be locked.",function(){
+        u.rounds[r].submitted=true;
         if(!u.history) u.history=[];
-        u.history.push({ts:Date.now(),predRound:1,picks:JSON.parse(JSON.stringify(u.rounds[1].picks)),submittedBy:"superadmin"});
+        u.history.push({ts:Date.now(),predRound:r,picks:JSON.parse(JSON.stringify(u.rounds[r].picks)),submittedBy:"superadmin"});
         // Persist THIS player's node (saveST only writes the current/admin user).
         saveUserNode(key);
         setTab();

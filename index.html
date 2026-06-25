@@ -20,14 +20,15 @@
   ADMIN_ON    Whether admin panel is unlocked
   VIEW        "login" | "main"
 
-  SCORING (max 225 pts)
+  SCORING (max 275 pts)
   ──────────────────────
   Group: +2 correct / +2 draw / -1 wrong   → 96 pts max
   R32:   +3 base + +1 if first picked in R1 → 64 pts max
-  R16:   +3 base + +1 if first picked in R1 → 32 pts max
-  QF:    +3 base + +1 if first picked in R1 → 16 pts max
-  SF:    +3 base + +1 if first picked in R1 →  8 pts max
-  Final: +6 base + +3 R1 / +2 R2 bonus      →  9 pts max
+  R16:   +4 base + +2 if first picked in R1 → 48 pts max
+  QF:    +5 base + +2 if first picked in R1 → 28 pts max
+  SF:    +6 base + +2 if first picked in R1 → 16 pts max
+  3rd:   +7 base + +2 if first picked in R2 →  9 pts max  (R2/R3 only)
+  Final: +10 base + +4 R1 / +3 R2 bonus     → 14 pts max
   (base = latest pick; bonus follows the TEAM, not the slot key)
 
   PREDICTION ROUNDS
@@ -470,27 +471,29 @@ if(IS_FIREBASE_CONFIGURED){
 const SC={
   groupCorrect:2,groupDraw:2,groupWrong:-1,
   ko:{
-    r32:  {base:3,bonus:[1,0,0]},   // +1 if the team was first picked in R1
-    r16:  {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
-    qf:   {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
-    sf:   {base:3,bonus:[1,0,0]},   // +1 if first picked in R1
-    final:{base:6,bonus:[3,2,0]}    // +3 R1 / +2 R2 / base only if first in R3
+    r32:  {base:3, bonus:[1,0,0]},   // 4 max
+    r16:  {base:4, bonus:[2,0,0]},   // 6 max
+    qf:   {base:5, bonus:[2,0,0]},   // 7 max
+    sf:   {base:6, bonus:[2,0,0]},   // 8 max
+    third:{base:7, bonus:[0,2,0]},   // 9 max — NEW: not pickable in R1, +2 if first picked R2
+    final:{base:10,bonus:[4,3,0]}    // 14 max
   }
 };
-/* SCORING SUMMARY (max 225 pts)
-   Group: +2 correct | +2 draw | -1 wrong   → max 96
-   R32:   +3 base + +1 if first picked in R1 → max 64 (4 × 16)
-   R16:   +3 base + +1 if first picked in R1 → max 32 (4 × 8)
-   QF:    +3 base + +1 if first picked in R1 → max 16 (4 × 4)
-   SF:    +3 base + +1 if first picked in R1 → max  8 (4 × 2)
-   Final: +6 base + +3 R1 / +2 R2 bonus      → max  9 (6+3 × 1)
-   TOTAL MAX: 96 + 64 + 32 + 16 + 8 + 9 = 225 pts
+/* SCORING SUMMARY (max 275 pts)
+   Group: +2 correct | +2 draw | -1 wrong       → max 96
+   R32:   +3 base + +1 if first picked in R1     → max 64 (4 × 16)
+   R16:   +4 base + +2 if first picked in R1     → max 48 (6 × 8)
+   QF:    +5 base + +2 if first picked in R1     → max 28 (7 × 4)
+   SF:    +6 base + +2 if first picked in R1     → max 16 (8 × 2)
+   3rd:   +7 base + +2 if first picked in R2     → max  9 (9 × 1)  [R2/R3 only]
+   Final: +10 base + +4 R1 / +3 R2 bonus         → max 14 (14 × 1)
+   TOTAL MAX: 96 + 64 + 48 + 28 + 16 + 9 + 14 = 275 pts
    BASE follows the player's LATEST (merged) pick; BONUS follows the TEAM and how
-   EARLY they committed — "did you pick this team to win this round, and how
-   early?" — slot-key independent. See koBonusRound. */
+   EARLY they committed. The 3rd-place match (M103, SF losers) can't be picked in
+   R1, so its bonus rewards an R2 commitment. See koBonusRound. */
 
 /* Open ko rounds per prediction round */
-const PR_OPEN={1:["r32","r16","qf","sf","final"],2:["r32","r16","qf","sf","final"],3:["final"]};
+const PR_OPEN={1:["r32","r16","qf","sf","final"],2:["r32","r16","qf","sf","third","final"],3:["third","final"]};
 
 /* ══ TEAMS ══ */
 const GROUPS={
@@ -559,11 +562,12 @@ const R32_SCHEDULE={
    round SLOT INDICES whose winners meet in that slot. NB: the real bracket does
    NOT pair consecutive R32 indices — these are mapped by match number (e.g. R16
    M89 = winners of M74 & M77, which are R32 seed slots 2 & 5). */
-const KO_PREV={r16:"r32",qf:"r16",sf:"qf",final:"sf"};
+const KO_PREV={r16:"r32",qf:"r16",sf:"qf",third:"sf",final:"sf"};
 const KO_FEED={
   r16:{0:[2,5],1:[0,3],2:[1,4],3:[6,7],4:[11,10],5:[9,8],6:[14,13],7:[12,15]},
   qf:{0:[0,1],1:[4,5],2:[2,3],3:[6,7]},
   sf:{0:[0,1],1:[2,3]},
+  third:{0:[0,1]}, // SF feeders, but contested by the LOSERS (handled specially)
   final:{0:[0,1]}
 };
 /* R32 VISUAL display order only: each R16 match's two feeders grouped together,
@@ -617,6 +621,9 @@ const KO_LATER_SCHEDULE={
     0:{m:101,day:"Tue Jul 14",time:"3:00 PM ET", venue:"AT&T Stadium, Dallas"},
     1:{m:102,day:"Wed Jul 15",time:"3:00 PM ET", venue:"Mercedes-Benz Stadium, Atlanta"}
   },
+  third:{
+    0:{m:103,day:"Sat Jul 18",time:"5:00 PM ET", venue:"Hard Rock Stadium, Miami"}
+  },
   final:{
     0:{m:104,day:"Sun Jul 19",time:"3:00 PM ET", venue:"MetLife, New York/New Jersey"}
   }
@@ -633,6 +640,21 @@ function koMatchNumber(round,i){
    from ST.results.ko, else an honest "Winner M##" placeholder. Never a guess.
    Returns {home:{team,label,placeholder}, away:{...}}. */
 function resolveKoLaterSlot(round,i){
+  if(round==="third"){
+    // 3rd-place: the two SF LOSERS (loser = the SF participant that isn't the winner).
+    const ov=(ST.results.koMatches.third&&ST.results.koMatches.third[0])||{};
+    const loserSide=(sfIdx,overrideTeam)=>{
+      if(overrideTeam) return {team:overrideTeam,label:overrideTeam,placeholder:false};
+      const teams=getKOMatchTeams("sf",sfIdx),w=ST.results.ko["sf_"+sfIdx]||null;
+      if(teams&&w&&teams.home&&teams.away){
+        const loser=teams.home===w?teams.away:teams.home;
+        if(loser&&loser!=="TBD") return {team:loser,label:loser,placeholder:false};
+      }
+      const mn=koMatchNumber("sf",sfIdx);
+      return {team:null,label:"Loser "+(mn?"M"+mn:"SF"),placeholder:true};
+    };
+    return {home:loserSide(0,ov.home),away:loserSide(1,ov.away)};
+  }
   const feed=(KO_FEED[round]&&KO_FEED[round][i])||[null,null];
   const prev=KO_PREV[round];
   const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
@@ -1162,7 +1184,7 @@ function calcScore(userKey){
 function roundPoints(userKey){
   const picks=getMergedPicks(userKey);
   const byRound={1:0,2:0,3:0};
-  const byStage={group:0,r32:0,r16:0,qf:0,sf:0,final:0};
+  const byStage={group:0,r32:0,r16:0,qf:0,sf:0,third:0,final:0};
   let total=0;
   for(const mid in ST.results.group){
     const raw=ST.results.group[mid];
@@ -1197,7 +1219,7 @@ function renderPointsBreakdown(userKey,focusRound){
     return html+'<div class="notice-blue" style="margin-bottom:0">No match results entered yet — points will appear here once the admin records results.</div></div>';
   }
   const {byRound,byStage,total}=roundPoints(userKey);
-  const rows=[['Group stage','group'],['Round of 32','r32'],['Round of 16','r16'],['Quarterfinals','qf'],['Semifinals','sf'],['Final','final']];
+  const rows=[['Group stage','group'],['Round of 32','r32'],['Round of 16','r16'],['Quarterfinals','qf'],['Semifinals','sf'],['3rd-place match','third'],['Final','final']];
   html+='<table style="width:100%;font-size:13px;border-collapse:collapse">';
   rows.forEach(function(rw){
     html+='<tr><td style="padding:4px 0;color:var(--muted)">'+rw[0]+'</td>'+
@@ -1321,6 +1343,18 @@ function getSFPairs(draft){
 function getFinalPair(draft){
   const f=KO_FEED.final[0];
   return {a:resolvePick(draft,'sf_'+f[0]),b:resolvePick(draft,'sf_'+f[1])};
+}
+
+/* 3rd-place pair for a player's bracket = the two SF LOSERS (the team in each SF
+   matchup the player did NOT pick to win). */
+function getThirdPair(draft){
+  const sf=getSFPairs(draft);
+  const loser=i=>{
+    const p=sf[i]; if(!p||!p.a||!p.b) return null;
+    const pick=resolvePick(draft,'sf_'+i); if(!pick) return null;
+    return pick===p.a?p.b:(pick===p.b?p.a:null);
+  };
+  return {a:loser(0),b:loser(1)};
 }
 
 /* ══ RENDER ══ */
@@ -2077,8 +2111,8 @@ function bindSubmitTimes(){
    filtering ST.results to matches on/before X, running calcScore, then ALWAYS
    restoring ST.results. Reuses calcScore/getMergedPicks/SC — no scoring changes. */
 
-const MOVE_KO_DATES={r32:Date.UTC(2026,5,28),r16:Date.UTC(2026,6,4),qf:Date.UTC(2026,6,9),sf:Date.UTC(2026,6,14),final:Date.UTC(2026,6,19)};
-const MOVE_KO_LABEL={r32:"Round of 32 · Jun 28",r16:"Round of 16 · Jul 4",qf:"Quarterfinals · Jul 9",sf:"Semifinals · Jul 14",final:"Final · Jul 19"};
+const MOVE_KO_DATES={r32:Date.UTC(2026,5,28),r16:Date.UTC(2026,6,4),qf:Date.UTC(2026,6,9),sf:Date.UTC(2026,6,14),third:Date.UTC(2026,6,18),final:Date.UTC(2026,6,19)};
+const MOVE_KO_LABEL={r32:"Round of 32 · Jun 28",r16:"Round of 16 · Jul 4",qf:"Quarterfinals · Jul 9",sf:"Semifinals · Jul 14",third:"3rd-place · Jul 18",final:"Final · Jul 19"};
 
 /* UTC sort key (the match's day) for a result key. */
 function matchDateKey(resultKey,isKo){
@@ -2847,6 +2881,7 @@ function r32SideTag(side){
 }
 function koSlotDescriptor(round,i){
   if(round==="r32"){ const s=R32_SEEDS[i]; return s?r32SideTag(s.a)+" vs "+r32SideTag(s.b):""; }
+  if(round==="third"){ const a=koMatchNumber("sf",0),b=koMatchNumber("sf",1); return (a?"L"+a:"?")+" vs "+(b?"L"+b:"?"); }
   const feed=(KO_FEED[round]&&KO_FEED[round][i])||[];
   const prev=KO_PREV[round];
   const a=koMatchNumber(prev,feed[0]), b=koMatchNumber(prev,feed[1]);
@@ -2976,6 +3011,8 @@ function renderGlobalKnockoutBracket(actS,aliveTeams){
     koDisplaySeq(rid,roundSlots[rid]).forEach(i=>{ col+=globalBracketSlotHtml(rid,i,actS,aliveTeams); });
     html+='<div class="brd-col"><div class="brd-col-title">'+roundLabels[rid]+'<span class="pts">+'+SC.ko[rid].base+' pts</span></div><div class="brd-matches">'+col+'</div></div>';
   });
+  // 3rd-place column (SF losers) — reuses the generic global slot (click-to-set + push).
+  html+='<div class="brd-col"><div class="brd-col-title">3rd-place<span class="pts">+'+SC.ko.third.base+' pts</span></div><div class="brd-matches">'+globalBracketSlotHtml('third',0,actS,aliveTeams)+'</div></div>';
   html+=globalBracketFinalHtml(actS,aliveTeams);
   html+='</div></div></div>';
   return html;
@@ -3329,7 +3366,7 @@ function renderLogin(){
     '<div class="hero-inner">'+
       '<div class="hero-badge">&#9917; '+(CURRENT_POOL?CURRENT_POOL.name:APP_NAME)+'</div>'+
       '<h1>World Cup <span>2026</span></h1>'+
-      '<p class="sub">3 Prediction Rounds &middot; Max 225 pts &middot; Early pick bonus for early callers</p>'+
+      '<p class="sub">3 Prediction Rounds &middot; Max 275 pts &middot; Early pick bonus for early callers</p>'+
     '</div>'+
     '<div class="hero-flag-strip"></div>'+
   '</div>'+
@@ -3380,7 +3417,7 @@ function renderMain(){
   <div class="hero">
     <div class="pname">${CURRENT_POOL?CURRENT_POOL.name:APP_NAME}</div>
     <h1>World Cup 2026</h1>
-    <p class="sub">3 Prediction Rounds · 225 pts max</p>
+    <p class="sub">3 Prediction Rounds · 275 pts max</p>
   </div>
   ${GLOBAL_ANNOUNCEMENT?`<div style="background:#faeeda;border:1px solid #fac775;border-radius:10px;padding:11px 14px;margin:10px 12px 0">
     <div style="font-size:11px;font-weight:600;color:#854f0b;margin-bottom:3px">📢 Announcement</div>
@@ -3556,6 +3593,42 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
   }
 
   html+="</div>";
+
+  // ── 3rd-place pick (R2/R3): the two SF LOSERS ──
+  var t3teams=getKOMatchTeams('third',0);
+  var t3a=t3teams?t3teams.home:null, t3b=t3teams?t3teams.away:null;
+  var t3raw=(draft.ko&&draft.ko['third_0'])||null;
+  var t3pick=t3raw?(typeof t3raw==='object'?t3raw.team:t3raw):null;
+  var t3res=ST.results.ko['third_0']||null;
+  var tsc=SC.ko['third']; var tbonus=tsc.bonus[pr-1]||0;
+  var t3dis=submitted||forceLocked;
+  html+="<div class=\"card\" style=\"text-align:center;padding:20px\">";
+  html+="<div style=\"font-size:30px;margin-bottom:4px\">&#129353;</div>";
+  html+="<div class=\"final-champion-title\" style=\"font-size:16px\">3rd-Place Match</div>";
+  html+="<div style=\"font-size:12px;color:var(--muted);margin-bottom:16px\">+"+tsc.base+" pts base"+(tbonus>0?" + +"+tbonus+" Round "+pr+" bonus":"")+" if correct &middot; the two semi-final losers</div>";
+  if(!t3a||t3a==='TBD'||!t3b||t3b==='TBD'){
+    html+="<div class=\"notice-blue\" style=\"text-align:left\">The two semi-final losers will appear here automatically once the semi-final results are entered.</div>";
+  } else {
+    var t3cls=function(team){ if(!team)return""; if(t3res){if(team===t3res&&t3pick===team)return"correct";if(team===t3pick&&team!==t3res)return"wrong";} if(t3pick===team)return"selected"; return""; };
+    html+="<div style=\"display:flex;gap:16px;justify-content:center;flex-wrap:wrap\">";
+    [t3a,t3b].forEach(function(team){
+      var cls=t3cls(team);
+      var borderColor=t3pick===team?"var(--navy)":cls==="correct"?"var(--green)":cls==="wrong"?"var(--red)":"var(--border)";
+      var bg=t3pick===team?"var(--navy)":cls==="correct"?"#e8f5ee":cls==="wrong"?"#fdecea":"var(--card)";
+      var textColor=t3pick===team?"#fff":cls==="correct"?"var(--green)":cls==="wrong"?"var(--red)":"var(--text)";
+      var card="<div class=\"final-pick-card "+cls+"\"";
+      if(!t3dis) card+=" data-ko=\"third_0\" data-team=\""+team+"\"";
+      card+=" style=\"min-width:120px;flex:1;max-width:180px;border:2px solid "+borderColor+";border-radius:12px;padding:16px 12px;cursor:"+(t3dis?"default":"pointer")+";background:"+bg+"\">";
+      card+="<div style=\"font-size:14px;font-weight:600;color:"+textColor+"\">"+team+"</div>";
+      if(t3pick===team&&!t3res) card+="<div style=\"font-size:11px;color:#aac;margin-top:4px\">Your pick &#10003;</div>";
+      if(t3res===team) card+="<div style=\"font-size:11px;color:var(--green);margin-top:4px;font-weight:600\">&#129353; 3rd place!</div>";
+      card+="</div>";
+      html+=card;
+    });
+    html+="</div>";
+  }
+  html+="</div>";
+
   return html;
 }
 
@@ -3815,6 +3888,21 @@ function renderBracket(draft,locked,pr,meta){
   }
   cols.push({id:'sf',label:'Semifinals',pts:SC.ko.sf.base,bonus:SC.ko.sf.bonus[pr-1]||0,html:sfhtml});
 
+  // 3rd-place match (M103) — the two SF LOSERS. Pickable in R2/R3 only; shown
+  // whenever it's open or a result exists (kept out of the R1 bracket).
+  const thirdOpen=open.includes('third')&&!locked;
+  if(pr>=2||ST.results.ko['third_0']){
+    let t3a=null,t3b=null;
+    const adminT=getAdminMatch('third',0);
+    if(adminT){t3a=adminT.home;t3b=adminT.away;}
+    else{const tp=getThirdPair(draft);t3a=tp.a;t3b=tp.b;}
+    const tpickObj=(draft.ko&&draft.ko['third_0'])||null;
+    const tpick=tpickObj?(typeof tpickObj==='object'?tpickObj.team:tpickObj):null;
+    const tres=ST.results.ko['third_0']||null;
+    const thtml=matchHTML('third',0,t3a,t3b,tpick,thirdOpen,locked||!thirdOpen,tres,null,null,false,false,null,null);
+    cols.push({id:'third',label:'3rd-place',pts:SC.ko.third.base,bonus:SC.ko.third.bonus[pr-1]||0,html:thtml});
+  }
+
   // Final — cascade from user's SF picks; admin matchup overrides if set
   const finalOpen=open.includes('final')&&!locked;
   let ta=null,tb=null;
@@ -3897,6 +3985,16 @@ function _fmtDate(y,m,d){const dt=new Date(Date.UTC(y,m,d));return _DOW[dt.getUT
 function getKOMatchTeams(rid,i){
   const m=(ST.results.koMatches[rid]&&ST.results.koMatches[rid][i])||null;
   if(m&&m.home&&m.away) return{home:m.home,away:m.away};
+  if(rid==="third"){
+    // SF losers (actual): the team in each decided SF that isn't the winner.
+    const losers=[];
+    for(let s=0;s<2;s++){
+      const t=getKOMatchTeams("sf",s),w=ST.results.ko["sf_"+s]||null;
+      losers.push((t&&w&&t.home&&t.away)?(t.home===w?t.away:t.home):null);
+    }
+    if(losers[0]||losers[1]) return{home:losers[0]||"TBD",away:losers[1]||"TBD"};
+    return null;
+  }
   const actS=actualStandings();
   if(rid==="r32"&&actS){
     const seed=R32_SEEDS[i];
@@ -3953,7 +4051,7 @@ function buildSchedule(){
   });
   [['r32','Round of 32 · Jun 28–Jul 3',16,Date.UTC(2026,5,28)],['r16','Round of 16 · Jul 4–7',8,Date.UTC(2026,6,4)],
    ['qf','Quarterfinals · Jul 9–11',4,Date.UTC(2026,6,9)],['sf','Semifinals · Jul 14–15',2,Date.UTC(2026,6,14)],
-   ['final','The Final · Jul 19',1,Date.UTC(2026,6,19)]].forEach(r=>{
+   ['third','3rd-Place Match · Jul 18',1,Date.UTC(2026,6,18)],['final','The Final · Jul 19',1,Date.UTC(2026,6,19)]].forEach(r=>{
     const items=[];
     // R32/QF visit reordered for feeder adjacency; `i` stays the TRUE slot index.
     const seq=koDisplaySeq(r[0],r[2]);
@@ -4017,7 +4115,7 @@ function koPickRow(mp,rid,i,userKey){
   // advance this round? (Re-derived so the shown pick belongs to this match and
   // agrees with the team-based scoring — see koPickedSide.)
   const pick=koPickedSide(userKey,rid,home,away,res);
-  const rLbl={r32:'R32',r16:'R16',qf:'QF',sf:'SF',final:'Final'}[rid]||rid;
+  const rLbl={r32:'R32',r16:'R16',qf:'QF',sf:'SF',third:'3rd',final:'Final'}[rid]||rid;
   const top='<div style="font-size:12px;font-weight:600">'+home+' <span style="color:var(--muted);font-weight:400">vs</span> '+away+
     '<span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:6px">'+rLbl+'</span></div>';
   let inner='';
@@ -4208,19 +4306,33 @@ function renderR1Pills(userKey){
   return '<div class="card" style="margin-top:12px"><div class="card-title">Round 1 knockout picks</div>'+body+'</div>';
 }
 
-/* R3 view: the user's ultimate champion pick. */
+/* R3 view: the user's ultimate champion pick + 3rd-place pick (both R3-pickable). */
 function renderR3Champion(userKey){
   const u=ST.users[userKey];
   const ko=(u&&u.rounds&&u.rounds[3]&&u.rounds[3].picks&&u.rounds[3].picks.ko)||{};
-  let t=ko['final_0']; t=(t&&typeof t==='object')?t.team:t; if(t==='__t3__')t=ko['final_0_t3']||null;
-  const wrap=inner=>'<div class="card" style="margin-top:12px"><div class="card-title">Round 3 — Champion</div>'+inner+'</div>';
-  if(!t) return wrap('<div class="notice-blue" style="margin-bottom:0">No champion pick submitted yet.</div>');
-  const fres=ST.results.ko['final_0']||null;
-  let line='';
-  if(fres&&fres===t){const br=koBonusRound(userKey,'final',t);const pts=br?SC.ko.final.base+(SC.ko.final.bonus[br-1]||0):0;
-    line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:6px">&#10003; Correct champion'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
-  else if(fres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:6px">&#10007; '+fres+' won the title</div>';}
-  return wrap('<div style="font-size:15px;font-weight:700;color:var(--navy)">&#127942; Ultimate champion pick: '+t+'</div>'+line);
+  const resolve=key=>{let t=ko[key]; t=(t&&typeof t==='object')?t.team:t; if(t==='__t3__')t=ko[key+'_t3']||null; return t||null;};
+  const wrap=inner=>'<div class="card" style="margin-top:12px"><div class="card-title">Round 3 — Champion &amp; 3rd place</div>'+inner+'</div>';
+  const champ=resolve('final_0'), third=resolve('third_0');
+  if(!champ&&!third) return wrap('<div class="notice-blue" style="margin-bottom:0">No Round 3 picks submitted yet.</div>');
+  // Champion block
+  let champBlock;
+  if(champ){
+    const fres=ST.results.ko['final_0']||null;let line='';
+    if(fres&&fres===champ){const br=koBonusRound(userKey,'final',champ);const pts=br?SC.ko.final.base+(SC.ko.final.bonus[br-1]||0):0;
+      line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:4px">&#10003; Correct champion'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
+    else if(fres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">&#10007; '+fres+' won the title</div>';}
+    champBlock='<div style="font-size:15px;font-weight:700;color:var(--navy)">&#127942; Ultimate champion pick: '+champ+'</div>'+line;
+  } else champBlock='<div style="font-size:12px;color:var(--muted)">No champion pick submitted yet.</div>';
+  // 3rd-place block
+  let thirdBlock;
+  if(third){
+    const tres=ST.results.ko['third_0']||null;let line='';
+    if(tres&&tres===third){const br=koBonusRound(userKey,'third',third);const pts=br?SC.ko.third.base+(SC.ko.third.bonus[br-1]||0):0;
+      line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:4px">&#10003; Correct 3rd place'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
+    else if(tres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">&#10007; '+tres+' took 3rd</div>';}
+    thirdBlock='<div style="font-size:13px;font-weight:700;color:var(--navy)">&#129353; 3rd-place pick: '+third+'</div>'+line;
+  } else thirdBlock='<div style="font-size:12px;color:var(--muted)">No 3rd-place pick submitted yet.</div>';
+  return wrap(champBlock+'<div style="border-top:1px solid var(--border);margin:10px 0"></div>'+thirdBlock);
 }
 
 /* Render the knockout section for the selected round (pills / bracket / champion). */
@@ -4609,10 +4721,10 @@ function renderViewUser(userKey){
 /* ══ SCORING ══ */
 function renderScoring(){
   return '<div class="card">'+
-    '<div class="card-title">Point system &mdash; max 225 pts</div>'+
+    '<div class="card-title">Point system &mdash; max 275 pts</div>'+
 
     '<div class="notice-blue" style="margin-bottom:14px">'+
-      '<strong>&#127942; Early pick bonus follows the TEAM:</strong> the question is "did you pick this team to win this round, and how early?" If a team you backed wins its match, you earn base points &mdash; plus an early-pick bonus if you had that same team for that round in an earlier prediction round. R32/R16/QF/SF give +1 for a Round 1 call; the Final rewards an early champion most (+3 R1 / +2 R2).'+
+      '<strong>&#127942; Early pick bonus follows the TEAM:</strong> the question is "did you pick this team to win this round, and how early?" If a team you backed wins its match, you earn base points &mdash; plus an early-pick bonus if you had that same team for that round in an earlier prediction round. R32/R16/QF/SF give a Round 1 bonus; the 3rd-place match (R2/R3 only) gives +2 for an R2 call; the Final rewards an early champion most (+4 R1 / +3 R2).'+
     '</div>'+
 
     '<table class="scoring-table">'+
@@ -4652,37 +4764,44 @@ function renderScoring(){
           '<td style="text-align:center;font-weight:600">64</td></tr>'+
 
         '<tr><td><strong>Round of 16</strong></td>'+
-          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
+          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+4</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">4</td>'+
-          '<td style="text-align:center;font-weight:600">32</td></tr>'+
+          '<td style="text-align:center;font-weight:600">6</td>'+
+          '<td style="text-align:center;font-weight:600">48</td></tr>'+
 
         '<tr><td><strong>Quarterfinals</strong></td>'+
-          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
+          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+5</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
           '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">4</td>'+
-          '<td style="text-align:center;font-weight:600">16</td></tr>'+
+          '<td style="text-align:center;font-weight:600">7</td>'+
+          '<td style="text-align:center;font-weight:600">28</td></tr>'+
 
         '<tr><td><strong>Semifinals</strong></td>'+
-          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+3</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+1</td>'+
-          '<td style="text-align:center;color:var(--muted)">—</td>'+
-          '<td style="text-align:center;font-weight:600">4</td>'+
-          '<td style="text-align:center;font-weight:600">8</td></tr>'+
-
-        '<tr style="border-top:2px solid var(--fifa-gold)"><td><strong>The Final</strong></td>'+
           '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+6</td>'+
-          '<td style="text-align:center;color:var(--fifa-gold);font-weight:700">+3</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
+          '<td style="text-align:center;color:var(--muted)">—</td>'+
+          '<td style="text-align:center;font-weight:600">8</td>'+
+          '<td style="text-align:center;font-weight:600">16</td></tr>'+
+
+        '<tr><td><strong>3rd-place match</strong> <span style="font-size:9px;color:var(--muted)">(R2/R3)</span></td>'+
+          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+7</td>'+
+          '<td style="text-align:center;color:var(--muted)">—</td>'+
           '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+2</td>'+
           '<td style="text-align:center;font-weight:600">9</td>'+
           '<td style="text-align:center;font-weight:600">9</td></tr>'+
 
+        '<tr style="border-top:2px solid var(--fifa-gold)"><td><strong>The Final</strong></td>'+
+          '<td style="text-align:center;color:var(--fifa-blue);font-weight:600">+10</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:700">+4</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold);font-weight:600">+3</td>'+
+          '<td style="text-align:center;font-weight:600">14</td>'+
+          '<td style="text-align:center;font-weight:600">14</td></tr>'+
+
         '<tr style="background:linear-gradient(135deg,var(--fifa-blue),var(--fifa-blue-mid))">'+
           '<td style="color:#fff;font-weight:700;font-family:Bebas Neue,sans-serif;font-size:14px;letter-spacing:.06em">TOTAL MAX</td>'+
           '<td></td><td></td><td></td><td></td>'+
-          '<td style="text-align:center;color:var(--fifa-gold-light);font-family:Bebas Neue,sans-serif;font-size:20px;font-weight:700">225</td>'+
+          '<td style="text-align:center;color:var(--fifa-gold-light);font-family:Bebas Neue,sans-serif;font-size:20px;font-weight:700">275</td>'+
         '</tr>'+
       '</tbody>'+
     '</table>'+
@@ -4690,9 +4809,10 @@ function renderScoring(){
     '<div style="margin-top:14px;padding:12px;background:var(--navygl);border-radius:8px;border-left:3px solid var(--fifa-gold)">'+
       '<div style="font-size:12px;font-weight:600;color:var(--fifa-blue);margin-bottom:6px">&#128161; How the early pick bonus works</div>'+
       '<div style="font-size:12px;color:var(--muted);line-height:1.7">'+
-        '<div>&#9989; <strong>R32 / R16 / QF / SF:</strong> had Brazil for that round back in <strong>Round 1</strong> and Brazil wins its match &rarr; <strong>+3 base + 1 early pick = 4 pts</strong>. First picked them in Round 2 &rarr; <strong>+3 base only</strong>.</div>'+
+        '<div>&#9989; <strong>R32–SF:</strong> e.g. a correct QF pick = <strong>+5 base + 2 R1 bonus = 7</strong> if you had that team for QF since Round 1; first picked them in Round 2 &rarr; base only.</div>'+
+        '<div>&#129353; <strong>3rd-place match:</strong> can\'t be picked in R1, so a correct pick committed in <strong>Round 2</strong> = <strong>+7 + 2 = 9</strong>; first picked in Round 3 = <strong>+7 base only</strong>.</div>'+
         '<div>&#128308; <strong>Abandoned a team?</strong> If you picked Brazil in R1 but switched to France in R2, Brazil earns you nothing &mdash; only your final pick counts. France then scores as a Round 2 pick (base only).</div>'+
-        '<div>&#127942; <strong>The Final:</strong> champion picked in R1 = <strong>+6 + 3 = 9</strong>, first in R2 = <strong>+6 + 2 = 8</strong>, first in R3 = <strong>+6 base only</strong>.</div>'+
+        '<div>&#127942; <strong>The Final:</strong> champion picked in R1 = <strong>+10 + 4 = 14</strong>, first in R2 = <strong>+10 + 3 = 13</strong>, first in R3 = <strong>+10 base only</strong>.</div>'+
         '<div>&#128081; <strong>Base</strong> follows your latest pick; the <strong>bonus</strong> follows the <strong>team</strong>, not a bracket slot &mdash; even if the matchups shift, your early call on a team still counts.</div>'+
       '</div>'+
     '</div>'+
@@ -4927,7 +5047,7 @@ function renderAdminKnockout(){
   // Build a cascaded matchup map derived from actual results
   // For each round, if admin hasn't manually set teams, derive from previous round winners
   function getAdminCascade(){
-    const cascade={r32:{},r16:{},qf:{},sf:{},final:{}};
+    const cascade={r32:{},r16:{},qf:{},sf:{},third:{},final:{}};
 
     // R32: from koMatches or auto-derived from group standings
     const actS=actualStandings();
@@ -4966,6 +5086,15 @@ function renderAdminKnockout(){
       const ta=ST.results.ko['sf_0']||null;
       const tb=ST.results.ko['sf_1']||null;
       if(ta||tb) cascade.final[0]={home:ta||'TBD',away:tb||'TBD',derived:true};
+    }
+
+    // 3rd-place: the two SF LOSERS (decided SF participant that isn't the winner).
+    const mt=(ST.results.koMatches.third&&ST.results.koMatches.third[0])||null;
+    if(mt&&mt.home&&mt.away){
+      cascade.third[0]={home:mt.home,away:mt.away};
+    } else {
+      const t3=getKOMatchTeams('third',0);
+      if(t3) cascade.third[0]={home:t3.home,away:t3.away,derived:true};
     }
 
     return cascade;
@@ -5056,6 +5185,14 @@ function renderAdminKnockout(){
       '<div class="brd-matches">'+colHtml+'</div>'+
     '</div>';
   });
+
+  // 3rd-place column (SF losers) — reuses the generic match slot + result clicks.
+  const tm=cascade.third[0]||{home:'',away:''};
+  const tres=ST.results.ko['third_0']||null;
+  html+='<div class="brd-col">'+
+    '<div class="brd-col-title">3rd-place<span class="pts">+'+SC.ko.third.base+' pts</span></div>'+
+    '<div class="brd-matches">'+buildMatchSlot('third_0',tm.home||'',tm.away||'',tres,tm.derived)+'</div>'+
+  '</div>';
 
   // Final column
   const fm=cascade.final[0]||{home:'',away:''};

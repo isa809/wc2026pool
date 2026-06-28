@@ -1692,7 +1692,7 @@ function bindSuperAdmin(){
               '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
                 '<button class="btn-sm" data-enter-pool="'+pool.code+'">&#9654; Enter</button>'+
                 '<button class="btn-sm'+(isLocked?'':' btn-danger')+'" data-lock-pool="'+pool.code+'" data-locked="'+(isLocked?"1":"0")+'">'+(isLocked?'&#128275; Unlock joining':'&#128274; Lock joining')+'</button>'+
-                '<button class="btn-sm'+(isSandbox?' btn-navy':'')+'" data-sandbox-pool="'+pool.code+'" data-sandbox="'+(isSandbox?"1":"0")+'">'+(isSandbox?'&#129514; Sandbox: ON':'&#129514; Mark sandbox')+'</button>'+
+                '<button class="btn-sm'+(isSandbox?' btn-navy':'')+'" data-sandbox-pool="'+pool.code+'" data-sandbox="'+(isSandbox?"1":"0")+'" title="Sandbox = this pool\'s local results never seed/leak up to Global Results, but global pushes still reach it">'+(isSandbox?'&#129514; Sandbox: ON':'&#129514; Mark sandbox')+'</button>'+
                 '<button class="btn-sm" data-rename-pool="'+pool.code+'" data-pool-name="'+pool.name+'">&#9998; Rename</button>'+
                 '<button class="btn-sm btn-danger" data-delete-pool="'+pool.code+'">&#128465; Delete</button>'+
               '</div>'+
@@ -1898,8 +1898,9 @@ function openGlobalResults(btn){
   loadAllPools((err,pools)=>{
     if(err){ showConfirmModal("Error loading pools: "+err,()=>{}); if(btn){btn.disabled=false;btn.innerHTML="&#9917; Global Results";} return; }
     pools=pools||[];
-    // Sandbox pools are isolated testers: Global Results never reads from or
-    // pushes to them, so exclude them from the targets and the seed merge.
+    // Sandbox pools are one-way testers: Global Results never READS from them
+    // (their local results don't seed or leak up here), but global pushes still
+    // reach them downward. Exclude them from the seed-merge source only.
     pools=pools.filter(p=>!p.sandbox);
     GLOBAL_POOLS=pools.map(p=>({code:p.code,name:p.name,players:Object.keys(p.users||{}).filter(k=>k!=="u_superadmin").length}));
     // Seed working copy from the union of all (non-sandbox) pools' results. Since
@@ -3027,7 +3028,7 @@ function pushResultToAllPools(type,key,value,cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
+    const codes=Object.keys(pools).filter(c=>!!pools[c]); // global pushes reach ALL pools (incl. sandbox)
     const updates={};
     codes.forEach(code=>{ updates["pools/"+code+"/results/"+type+"/"+key]=value; });
     return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
@@ -3041,7 +3042,7 @@ function pushAllResultsToAllPools(cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
+    const codes=Object.keys(pools).filter(c=>!!pools[c]); // global pushes reach ALL pools (incl. sandbox)
     const updates={};
     // Only push matchup slots that actually have both teams set.
     const km=ST.results.koMatches||{};
@@ -3070,7 +3071,7 @@ function pushKoMatchToAllPools(round,i,value,cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
+    const codes=Object.keys(pools).filter(c=>!!pools[c]); // global pushes reach ALL pools (incl. sandbox)
     const updates={};
     codes.forEach(code=>{ updates["pools/"+code+"/results/koMatches/"+round+"/"+i]=value; });
     return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
@@ -3085,7 +3086,7 @@ function clearAllKnockoutFromAllPools(cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
-    const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
+    const codes=Object.keys(pools).filter(c=>!!pools[c]); // global pushes reach ALL pools (incl. sandbox)
     if(!codes.length){ cb&&cb(null,0); return; }
     const updates={};
     codes.forEach(code=>{

@@ -644,6 +644,7 @@ function resolveKoLaterSlot(round,i){
     // 3rd-place: the two SF LOSERS (loser = the SF participant that isn't the winner).
     const ov=(ST.results.koMatches.third&&ST.results.koMatches.third[0])||{};
     const loserSide=(sfIdx,overrideTeam)=>{
+      if(overrideTeam==="TBD") return {team:null,label:"TBD",placeholder:true};
       if(overrideTeam) return {team:overrideTeam,label:overrideTeam,placeholder:false};
       const teams=getKOMatchTeams("sf",sfIdx),w=ST.results.ko["sf_"+sfIdx]||null;
       if(teams&&w&&teams.home&&teams.away){
@@ -659,6 +660,7 @@ function resolveKoLaterSlot(round,i){
   const prev=KO_PREV[round];
   const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
   const side=(feedIdx,overrideTeam)=>{
+    if(overrideTeam==="TBD") return {team:null,label:"TBD",placeholder:true};
     if(overrideTeam) return {team:overrideTeam,label:overrideTeam,placeholder:false};
     const w=(feedIdx!=null&&ST.results.ko[prev+"_"+feedIdx])||null;
     if(w) return {team:w,label:w,placeholder:false};
@@ -977,6 +979,7 @@ function getAliveTeams(){
    standings (W/R only) > an honest placeholder label. Never guesses a T3 team.
    Returns {team, label, placeholder} — team is null when only a placeholder. */
 function resolveR32Side(side,overrideTeam,actS){
+  if(overrideTeam==="TBD") return {team:null,label:"TBD",placeholder:true}; // explicit undetermined
   if(overrideTeam) return {team:overrideTeam,label:overrideTeam,placeholder:false};
   if(side.t==="T3")  return {team:null,label:side.label||"Best 3rd place team",placeholder:true};
   const t=slotTeam(side,actS);
@@ -2930,11 +2933,13 @@ function globalBracketSlotHtml(round,i,actS,aliveTeams){
   const sideAttr=round==="r32"?('data-gr32side="'+i+'|'):('data-gkoside="'+round+'|'+i+'|');
   const ovSel=(sideName,cur)=>'<select '+sideAttr+sideName+'" class="asel" style="width:100%;font-size:11px;margin-bottom:4px">'+
     '<option value="">— auto —</option>'+
+    '<option value="TBD"'+(cur==='TBD'?' selected':'')+'>TBD (undetermined)</option>'+
     aliveTeams.map(t=>'<option value="'+t+'"'+(cur===t?' selected':'')+'>'+t+'</option>').join('')+
   '</select>';
   const pushAttr=round==="r32"?('data-gpush-r32="'+i+'"'):('data-gpushkomatch="'+round+'|'+i+'"');
   const clearAttr=round==="r32"?('data-gclear-r32="'+i+'"'):('data-gclearkomatch="'+round+'|'+i+'"');
-  const bothReal=slot.home.team&&slot.away.team;
+  // A side is "set" for push if it resolves to a real team OR is explicitly TBD.
+  const bothReal=(slot.home.team||ov.home==="TBD")&&(slot.away.team||ov.away==="TBD");
   const hasOverride=!!(ov.home||ov.away);
 
   return '<div class="brd-match" style="position:relative">'+
@@ -2971,7 +2976,7 @@ function globalBracketFinalHtml(actS,aliveTeams){
         (won?'<span style="font-size:10px;color:#fff;margin-left:4px">&#127942;</span><span class="admin-clear-hint">&#10005; clear</span>':'')+
       '</div>';
   };
-  const bothReal=slot.home.team&&slot.away.team;
+  const bothReal=(slot.home.team||ov.home==="TBD")&&(slot.away.team||ov.away==="TBD");
   const hasOverride=!!(ov.home||ov.away);
   return '<div class="brd-col">'+
     '<div class="brd-col-title">The Final<span class="pts">+'+SC.ko['final'].base+' pts</span></div>'+
@@ -2984,8 +2989,8 @@ function globalBracketFinalHtml(actS,aliveTeams){
         '<button class="admin-edit-btn" data-gedit-match="final_0" title="Override matchup" style="position:absolute;top:2px;right:2px;border:none;background:transparent;cursor:pointer;font-size:11px;color:var(--muted);padding:2px 4px;opacity:.6">&#9998;</button>'+
         '<div class="admin-edit-form" id="gedit-final_0" style="display:'+(GKO_EDIT==='final_0'?'block':'none')+';padding:6px;background:#f5f5f2;border-top:1px solid var(--border)">'+
           '<div style="font-size:9px;color:var(--muted);margin-bottom:3px">Override matchup (alive teams):</div>'+
-          '<select data-gkoside="final|0|home" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.home===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
-          '<select data-gkoside="final|0|away" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.away===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
+          '<select data-gkoside="final|0|home" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option><option value="TBD"'+(ov.home==='TBD'?' selected':'')+'>TBD (undetermined)</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.home===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
+          '<select data-gkoside="final|0|away" class="asel" style="width:100%;font-size:11px;margin-bottom:4px"><option value="">— auto —</option><option value="TBD"'+(ov.away==='TBD'?' selected':'')+'>TBD (undetermined)</option>'+aliveTeams.map(t=>'<option value="'+t+'"'+(ov.away===t?' selected':'')+'>'+t+'</option>').join('')+'</select>'+
           '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
             '<button class="btn-sm"'+(bothReal?'':' disabled')+' data-gpushkomatch="final|0">&#11014; Push</button>'+
             (hasOverride?'<button class="btn-sm btn-danger" data-gclearkomatch="final|0">&#10005; Clear</button>':'')+
@@ -3190,8 +3195,10 @@ function bindGlobalResults(){
     btn.onclick=()=>{
       const i=parseInt(btn.dataset.gpushR32,10);
       const slot=resolveR32Slot(i,actualStandings());
-      const home=slot.home.team, away=slot.away.team;
-      if(!home||!away){ setMsg("Both teams must be set (auto or override) before pushing.",false); return; }
+      const ov=(ST.results.koMatches.r32&&ST.results.koMatches.r32[i])||{};
+      const home=slot.home.team||(ov.home==="TBD"?"TBD":null);
+      const away=slot.away.team||(ov.away==="TBD"?"TBD":null);
+      if(!home||!away){ setMsg("Both sides must be set (a team, TBD, or auto-derived) before pushing.",false); return; }
       const sch=R32_SCHEDULE[i]||{};
       const label=(sch.m?"M"+sch.m+" ":"")+home+" vs "+away;
       showConfirmModal('Push matchup "'+label+'" to all '+poolCount+' pools? This sets the Round 2 matchup for all '+playerCount+' players. It does NOT change anyone’s picks.',()=>{
@@ -3240,8 +3247,10 @@ function bindGlobalResults(){
       const [round,iStr]=btn.dataset.gpushkomatch.split("|");
       const i=parseInt(iStr,10);
       const slot=resolveKoLaterSlot(round,i);
-      const home=slot.home.team, away=slot.away.team;
-      if(!home||!away){ setMsg("Both teams must be set (winner or override) before pushing.",false); return; }
+      const ov=(ST.results.koMatches[round]&&ST.results.koMatches[round][i])||{};
+      const home=slot.home.team||(ov.home==="TBD"?"TBD":null);
+      const away=slot.away.team||(ov.away==="TBD"?"TBD":null);
+      if(!home||!away){ setMsg("Both sides must be set (a team, TBD, or auto-derived) before pushing.",false); return; }
       const mn=koMatchNumber(round,i);
       const label=(mn?"M"+mn+" ":"")+home+" vs "+away;
       showConfirmModal('Push matchup "'+label+'" to all '+poolCount+' pools? This sets the matchup for all '+playerCount+' players. It does NOT change anyone’s picks.',()=>{
@@ -3777,7 +3786,10 @@ function renderBracket(draft,locked,pr,meta){
       '</div>';
     }
 
-    // Standard match
+    // Standard match. An explicit "TBD" override side is a placeholder, not a
+    // pickable team — normalise it to empty so the slot shows TBD and locks.
+    if(teamA==="TBD") teamA=null;
+    if(teamB==="TBD") teamB=null;
     const pending=!teamA||!teamB;
     const dis2=!isOpen||isLocked||pending||!!result;
     function slotCls(team){

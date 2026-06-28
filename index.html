@@ -715,6 +715,7 @@ let GKO_EDIT=null; // Global Results: key (e.g. "r32_5"/"final_0") of the open m
 const EXPANDED={};
 const PLAYER_VIEW={};
 const PLAYER_BR_ROUND={}; // per-inspected-player KO bracket round (1|2); default R2
+const GROUP_OPEN={}; // per-inspected-player: is the group-stage section expanded? default collapsed
 
 /* Super-admin "Global Results" screen (push one result to ALL pools at once).
    SA_GLOBAL toggles the screen within the VIEW="super" route. GLOBAL_RESULTS is
@@ -4160,14 +4161,17 @@ function renderByDate(userKey){
   const mp=getMergedPicks(userKey);
   const sched=buildSchedule();
   if(!sched.length) return '<div class="card"><div class="notice-blue">No matches scheduled yet.</div></div>';
-  let html='';
-  sched.forEach(day=>{
-    html+='<div class="card" style="padding:10px 12px;margin-bottom:10px">'+
+  const dayCard=day=>'<div class="card" style="padding:10px 12px;margin-bottom:10px">'+
       '<div style="display:inline-block;font-size:11px;font-weight:700;color:var(--navy);background:var(--navygl);border-radius:12px;padding:3px 10px;margin-bottom:6px">'+
-        day.label+' &middot; '+day.items.length+' match'+(day.items.length>1?'es':'')+'</div>';
-    day.items.forEach(it=>html+=pickMatchRow(mp,it,userKey));
-    html+='</div>';
-  });
+        day.label+' &middot; '+day.items.length+' match'+(day.items.length>1?'es':'')+'</div>'+
+      day.items.map(it=>pickMatchRow(mp,it,userKey)).join('')+
+    '</div>';
+  // Group-stage days collapse together (every item kind 'group'); KO days follow.
+  const isGroupDay=day=>day.items.every(it=>it.kind==='group');
+  const groupDays=sched.filter(isGroupDay), koDays=sched.filter(d=>!isGroupDay(d));
+  let html='';
+  if(groupDays.length) html+=groupCollapseSection(userKey,groupDays.map(dayCard).join(''));
+  koDays.forEach(day=>{ html+=dayCard(day); });
   return html;
 }
 
@@ -4205,9 +4209,25 @@ function renderLBPanel(targetKey){
     '<div id="lbpanelbody_'+targetKey+'">'+(mode==='date'?renderByDate(targetKey):renderPlayerByRound(targetKey))+'</div>';
 }
 
+/* Collapsible wrapper for the group-stage section (collapsed by default). Header
+   shows the player's group points (group portion of calcScore, via roundPoints).
+   `innerHtml` is the full group detail, shown only when expanded. */
+function groupCollapseSection(userKey,innerHtml){
+  const open=!!GROUP_OPEN[userKey];
+  const gp=roundPoints(userKey).byStage.group;
+  return '<div class="card" style="margin-top:12px;padding:0;overflow:hidden">'+
+    '<div data-group-toggle="'+userKey+'" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px;user-select:none">'+
+      '<span style="font-size:12px;color:var(--muted);width:12px">'+(open?'&#9660;':'&#9654;')+'</span>'+
+      '<span style="font-weight:700;font-size:14px;color:var(--navy);flex:1">Group Stage</span>'+
+      '<span style="font-size:13px;font-weight:700;color:var(--fifa-blue)">'+gp+' pts</span>'+
+    '</div>'+
+    (open?'<div style="border-top:1px solid var(--border);padding:0 12px 12px">'+innerHtml+'</div>':'')+
+  '</div>';
+}
+
 /* Group-stage result cards (teams · result · pick · +/- points chip) for a user. */
-function groupResultCards(mp){
-  let groupHtml='<div class="card" style="margin-top:12px"><div class="card-title">Group stage results</div><div class="group-grid">';
+function groupResultCards(mp,bare){
+  let groupHtml=bare?'<div class="group-grid">':'<div class="card" style="margin-top:12px"><div class="card-title">Group stage results</div><div class="group-grid">';
   for(const g in GM){
     groupHtml+='<div class="g-card"><div class="g-label">Group '+g+'</div>';
     for(const m of GM[g]){
@@ -4232,7 +4252,7 @@ function groupResultCards(mp){
     }
     groupHtml+='</div>';
   }
-  groupHtml+='</div></div>';
+  groupHtml+=bare?'</div>':'</div></div>';
   return groupHtml;
 }
 
@@ -4372,7 +4392,8 @@ function renderKoForRound(userKey,sel){
 function renderKoRoundView(userKey){
   const mp=getMergedPicks(userKey);
   const sel=brSelRound(userKey);
-  return groupResultCards(mp)+brRoundToggle(userKey,sel)+renderKoForRound(userKey,sel);
+  // Group stage collapsed by default (group play is done); knockout stays open.
+  return groupCollapseSection(userKey,groupResultCards(mp,true))+brRoundToggle(userKey,sel)+renderKoForRound(userKey,sel);
 }
 
 function renderPlayerByRound(userKey){ return renderKoRoundView(userKey); }
@@ -5589,16 +5610,25 @@ function bindTab(){
 
   /* standings → expand/collapse a player's inline pick panel */
   document.querySelectorAll("[data-expand-user]").forEach(row=>{
-    row.onclick=()=>{ const k=row.dataset.expandUser; EXPANDED[k]=!EXPANDED[k]; if(EXPANDED[k]) delete PLAYER_BR_ROUND[k]; setTab(); };
+    row.onclick=()=>{ const k=row.dataset.expandUser; EXPANDED[k]=!EXPANDED[k]; if(EXPANDED[k]){ delete PLAYER_BR_ROUND[k]; delete GROUP_OPEN[k]; } setTab(); };
   });
-  /* per-player panel sub-toggle (By round / By date) — re-render only that panel body */
+  /* Re-render a standings panel body (mode-aware) and RE-WIRE its in-body toggles
+     (they live inside the replaced HTML, so their handlers must be re-attached or
+     they'd stick after one click). In the Results tab there's no panel body → the
+     caller re-renders the whole tab via setTab. */
+  function rerenderPanel(k){
+    const body=document.getElementById("lbpanelbody_"+k);
+    if(body){ const mode=PLAYER_VIEW[k]||"round"; body.innerHTML=(mode==="date"?renderByDate(k):renderPlayerByRound(k)); rewirePanel(body); return true; }
+    return false;
+  }
+  function rewirePanel(scope){ wireBrRound(scope); wireGroupToggle(scope); }
+  /* per-player panel sub-toggle (By round / By date) */
   document.querySelectorAll("[data-pview]").forEach(b=>{
     b.onclick=(e)=>{
       e.stopPropagation();
       const parts=b.dataset.pview.split(":"); const k=parts[0], mode=parts[1];
       PLAYER_VIEW[k]=mode;
-      const body=document.getElementById("lbpanelbody_"+k);
-      if(body){ body.innerHTML=(mode==="date"?renderByDate(k):renderPlayerByRound(k)); wireBrRound(body); }
+      rerenderPanel(k);
       document.querySelectorAll('[data-pview^="'+k+':"]').forEach(x=>{
         const on=x.dataset.pview===k+":"+mode;
         x.style.background=on?"var(--navy)":"transparent";
@@ -5606,23 +5636,29 @@ function bindTab(){
       });
     };
   });
-  /* R1/R2/R3 knockout toggle — bidirectional. After re-rendering the standings
-     panel body we must RE-WIRE the freshly-rendered toggle buttons (they live
-     inside the replaced body), otherwise the toggle sticks after one switch.
-     In the Results tab there's no panel body → re-render the whole tab. */
+  /* R1/R2/R3 knockout toggle — bidirectional */
   function wireBrRound(scope){
     (scope||document).querySelectorAll("[data-brround]").forEach(b=>{
       b.onclick=(e)=>{
         e.stopPropagation();
         const parts=b.dataset.brround.split(":"); const k=parts[0], rnd=+parts[1];
         PLAYER_BR_ROUND[k]=rnd;
-        const body=document.getElementById("lbpanelbody_"+k);
-        if(body){ body.innerHTML=renderPlayerByRound(k); wireBrRound(body); }
-        else setTab();
+        if(!rerenderPanel(k)) setTab();
       };
     });
   }
-  wireBrRound(document);
+  /* Group-stage collapse/expand toggle (By round + By date) */
+  function wireGroupToggle(scope){
+    (scope||document).querySelectorAll("[data-group-toggle]").forEach(b=>{
+      b.onclick=(e)=>{
+        e.stopPropagation();
+        const k=b.dataset.groupToggle;
+        GROUP_OPEN[k]=!GROUP_OPEN[k];
+        if(!rerenderPanel(k)) setTab();
+      };
+    });
+  }
+  rewirePanel(document);
 
   /* admin unlock */
   const apBtn=document.getElementById("apBtn");

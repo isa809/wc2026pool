@@ -3685,6 +3685,15 @@ function renderGroupPicks(draft,locked){
 }
 
 /* ══ BRACKET ══ */
+/* Header text describing a KO stage's early-pick bonus rule: the best bonus in
+   the stage and the round it applies to (e.g. "+1 R1 bonus", 3rd-place "+2 R2
+   bonus"). Round-independent so a read-only bracket's header matches the actual
+   team-based scoring shown on the slots — not the viewed round. */
+function koStageBonusText(rid){
+  const b=(SC.ko[rid]&&SC.ko[rid].bonus)||[]; const mb=Math.max(0,...b);
+  if(mb<=0) return 'no bonus';
+  return '+'+mb+' R'+(b.indexOf(mb)+1)+' bonus';
+}
 function renderBracket(draft,locked,pr,meta){
   meta=meta||{};
   const open=PR_OPEN[pr]||[];
@@ -3942,7 +3951,7 @@ function renderBracket(draft,locked,pr,meta){
     '<div class="bracket-wrap"><div class="bracket">';
 
   cols.forEach(function(col){
-    const bTxt=col.bonus>0?'+'+col.bonus+' R'+pr+' bonus':'no bonus';
+    const bTxt=koStageBonusText(col.id);
     html+='<div class="brd-col">'+
       '<div class="brd-col-title">'+col.label+'<span class="pts">+'+col.pts+' pts &middot; '+bTxt+'</span></div>'+
       '<div class="brd-matches">'+col.html+'</div>'+
@@ -3956,8 +3965,7 @@ function renderBracket(draft,locked,pr,meta){
     if(fpick===team) return 'selected';
     return '';
   }
-  const fbonus=SC.ko.final.bonus[pr-1]||0;
-  const fBonusTxt=fbonus>0?'+'+fbonus+' R'+pr+' bonus':'no bonus';
+  const fBonusTxt=koStageBonusText('final');
   const fdis=(!finalOpen||!ta||!tb||fres)?'disabled':'';
   const dispFa=ta||'<em style="color:var(--muted);font-size:10px">TBD</em>';
   const dispFb=tb||'<em style="color:var(--muted);font-size:10px">TBD</em>';

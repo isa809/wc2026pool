@@ -1671,13 +1671,20 @@ function renderSuperAdmin(){
       '<div id="saGlobalMsgStatus" style="font-size:12px;color:#854f0b;margin-top:6px"></div>'+
     '</div>'+
     '<div style="background:#fdeaea;border:1px solid #f1a9a0;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
-      '<div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:6px">&#128274; Round 2 submission lock</div>'+
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Stops players from submitting Round 2 in every pool <strong>except sandbox</strong> pools. Round 3 and already-submitted brackets are unaffected.</div>'+
-      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
-        '<button class="btn-sm btn-danger" id="saLockR2">&#128274; Lock R2 (all non-sandbox pools)</button>'+
+      '<div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:6px">&#128274; Round submission locks</div>'+
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Stops players from submitting a round in every pool <strong>except sandbox</strong> pools. Only affects that round while it&#39;s open; already-submitted brackets are unaffected.</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
+        '<span style="font-size:11px;font-weight:700;color:var(--navy);width:24px">R2</span>'+
+        '<button class="btn-sm btn-danger" id="saLockR2">&#128274; Lock R2</button>'+
         '<button class="btn-sm" id="saUnlockR2">&#128275; Unlock R2</button>'+
+        '<span id="saR2LockStatus" style="font-size:12px"></span>'+
       '</div>'+
-      '<div id="saR2LockStatus" style="font-size:12px;margin-top:6px"></div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+        '<span style="font-size:11px;font-weight:700;color:var(--navy);width:24px">R3</span>'+
+        '<button class="btn-sm btn-danger" id="saLockR3">&#128274; Lock R3</button>'+
+        '<button class="btn-sm" id="saUnlockR3">&#128275; Unlock R3</button>'+
+        '<span id="saR3LockStatus" style="font-size:12px"></span>'+
+      '</div>'+
     '</div>'+
     '<div id="saPoolList"><div style="color:var(--muted);font-size:13px;padding:10px 0">Loading pools...</div></div>'+
   '</div>';
@@ -1697,27 +1704,32 @@ function bindSuperAdmin(){
   }
   document.getElementById("saLogout").onclick=()=>{IS_SUPER_ADMIN=false;VIEW="landing";render();};
 
-  const r2Status=t=>{const s=document.getElementById("saR2LockStatus");if(s)s.innerHTML=t;};
-  const lockR2Btn=document.getElementById("saLockR2");
-  if(lockR2Btn) lockR2Btn.onclick=()=>{
-    showConfirmModal("Lock Round 2 submissions across ALL pools except sandbox? Players who haven't submitted R2 will no longer be able to. Round 3 and existing submissions are unaffected — you can unlock later.",function(){
-      r2Status('<span style="color:var(--muted)">Locking…</span>');
-      setR2LockAllPools(true,(err,n)=>{
-        if(err){ r2Status('<span style="color:var(--red)">Failed: '+err+'</span>'); return; }
-        r2Status('<span style="color:var(--green)">&#10003; Round 2 locked in '+n+' pool'+(n!==1?'s':'')+' (sandbox skipped).</span>');
+  // Round-submission locks (R2 / R3) across all non-sandbox pools.
+  const wireRoundLock=(rd,field,lockId,unlockId,statusId)=>{
+    const status=t=>{const s=document.getElementById(statusId);if(s)s.innerHTML=t;};
+    const lb=document.getElementById(lockId);
+    if(lb) lb.onclick=()=>{
+      showConfirmModal("Lock Round "+rd+" submissions across ALL pools except sandbox? Players who haven't submitted Round "+rd+" will no longer be able to. Existing submissions and other rounds are unaffected — you can unlock later.",function(){
+        status('<span style="color:var(--muted)">Locking…</span>');
+        setRoundLockAllPools(field,true,(err,n)=>{
+          if(err){ status('<span style="color:var(--red)">Failed: '+err+'</span>'); return; }
+          status('<span style="color:var(--green)">&#10003; Round '+rd+' locked in '+n+' pool'+(n!==1?'s':'')+' (sandbox skipped).</span>');
+        });
       });
-    });
-  };
-  const unlockR2Btn=document.getElementById("saUnlockR2");
-  if(unlockR2Btn) unlockR2Btn.onclick=()=>{
-    showConfirmModal("Re-open Round 2 submissions across all non-sandbox pools?",function(){
-      r2Status('<span style="color:var(--muted)">Unlocking…</span>');
-      setR2LockAllPools(false,(err,n)=>{
-        if(err){ r2Status('<span style="color:var(--red)">Failed: '+err+'</span>'); return; }
-        r2Status('<span style="color:var(--green)">&#10003; Round 2 re-opened in '+n+' pool'+(n!==1?'s':'')+'.</span>');
+    };
+    const ub=document.getElementById(unlockId);
+    if(ub) ub.onclick=()=>{
+      showConfirmModal("Re-open Round "+rd+" submissions across all non-sandbox pools?",function(){
+        status('<span style="color:var(--muted)">Unlocking…</span>');
+        setRoundLockAllPools(field,false,(err,n)=>{
+          if(err){ status('<span style="color:var(--red)">Failed: '+err+'</span>'); return; }
+          status('<span style="color:var(--green)">&#10003; Round '+rd+' re-opened in '+n+' pool'+(n!==1?'s':'')+'.</span>');
+        });
       });
-    });
+    };
   };
+  wireRoundLock(2,'r2Locked','saLockR2','saUnlockR2','saR2LockStatus');
+  wireRoundLock(3,'r3Locked','saLockR3','saUnlockR3','saR3LockStatus');
 
   function renderPoolList(){
     loadAllPools((err,pools)=>{
@@ -3144,17 +3156,18 @@ function pushKoMatchToAllPools(round,i,value,cb){
   }).catch(e=>cb&&cb(e.message));
 }
 
-/* Super admin: set the Round 2 submission lock across EVERY pool except sandbox
-   pools, in one atomic update. locked=true stops players submitting R2; false
-   re-opens it. Only writes the pools/<code>/r2Locked flag — no other data. */
-function setR2LockAllPools(locked,cb){
+/* Super admin: set a round-submission lock flag (e.g. "r2Locked"/"r3Locked")
+   across EVERY pool except sandbox pools, in one atomic update. locked=true
+   stops players submitting that round; false re-opens it. Only writes the
+   pools/<code>/<field> flag — no other data. */
+function setRoundLockAllPools(field,locked,cb){
   if(!db){ cb&&cb("Firebase not initialized"); return; }
   db.ref("pools").once("value").then(snap=>{
     const pools=snap.val()||{};
     const codes=Object.keys(pools).filter(c=>pools[c]&&!pools[c].sandbox); // skip sandbox pools
     if(!codes.length){ cb&&cb(null,0); return; }
     const updates={};
-    codes.forEach(code=>{ updates["pools/"+code+"/r2Locked"]=!!locked; });
+    codes.forEach(code=>{ updates["pools/"+code+"/"+field]=!!locked; });
     return db.ref().update(updates).then(()=>cb&&cb(null,codes.length));
   }).catch(e=>cb&&cb(e.message));
 }
@@ -3676,14 +3689,16 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
   }
 
   if(!submitted&&finalA&&finalB&&!forceLocked){
-    if(!pick){
+    if(r3SubmitLocked()){
+      html+="<div class=\"notice-red\" style=\"margin-bottom:0\"><strong>&#128274; Round 3 submissions are closed.</strong><br>The organizer has locked the final pick — it can no longer be submitted.</div>";
+    } else if(!pick){
       html+="<div class=\"notice-red\" style=\"margin-bottom:8px\">Pick your champion to submit.</div>";
       html+="<button class=\"btn-submit\" disabled>Submit Final Pick</button>";
     } else {
       html+="<div class=\"notice-green\" style=\"margin-bottom:8px\">You picked <strong>"+pick+"</strong> to win the World Cup!</div>";
       html+="<button class=\"btn-submit\" id=\"submitBtn\">Submit Final Pick &#8212; Lock It In</button>";
+      html+="<p style=\"font-size:11px;color:var(--muted);margin-top:8px\">Once submitted your final pick is permanently locked.</p>";
     }
-    html+="<p style=\"font-size:11px;color:var(--muted);margin-top:8px\">Once submitted your final pick is permanently locked.</p>";
   }
 
   html+="</div>";
@@ -5510,13 +5525,16 @@ function updateMissCount(){
   }
 }
 
-/* Super-admin lock: Round 2 submissions are closed (set across all non-sandbox
-   pools from the super-admin view). Only blocks R2 while R2 is the open round. */
+/* Super-admin locks: a round's submissions are closed (set across all
+   non-sandbox pools from the super-admin view). Each only blocks while that
+   round is the open round. */
 function r2SubmitLocked(){ return ST.predRound===2 && !!ST.r2Locked; }
+function r3SubmitLocked(){ return ST.predRound===3 && !!ST.r3Locked; }
+function roundSubmitLocked(){ return r2SubmitLocked()||r3SubmitLocked(); }
 
 function submitRound(){
   const pr=ST.predRound;
-  if(pr===2 && r2SubmitLocked()){ setTab(); return; } // R2 locked by the organizer
+  if(roundSubmitLocked()){ setTab(); return; } // current round locked by the organizer
   // Show confirm modal instead of browser confirm() which is blocked in iframes
   showConfirmModal(pr, function(){
     const u=ST.users[CU.key];
@@ -6104,6 +6122,7 @@ function loadPool(code, callback){
       tournament:data.tournament||"active",
       locked:!!data.locked,
       r2Locked:!!data.r2Locked,
+      r3Locked:!!data.r3Locked,
       announcement:data.announcement||""
     };
     ST.users     =data.users     ||{};
@@ -6111,6 +6130,7 @@ function loadPool(code, callback){
     ST.adminPin  =data.adminPin  ||"0000";
     ST.predRound =data.predRound ||1;
     ST.r2Locked  =!!data.r2Locked;
+    ST.r3Locked  =!!data.r3Locked;
     ST.tournament=data.tournament||"active";
     ST.announcement=data.announcement||"";
     ST._adminTab =data._adminTab ||"rounds";
@@ -6223,10 +6243,12 @@ function listenForUpdates(){
     const prevTournament=ST.tournament;
     const prevAnnounce=ST.announcement||"";
     const prevR2Locked=!!ST.r2Locked;
+    const prevR3Locked=!!ST.r3Locked;
     ST.results   =normResults(data.results||ST.results);
     ST.adminPin  =data.adminPin  ||ST.adminPin;
     ST.predRound =data.predRound ||ST.predRound;
     ST.r2Locked  =!!data.r2Locked; // super-admin R2 submission lock (live)
+    ST.r3Locked  =!!data.r3Locked; // super-admin R3 submission lock (live)
     ST.tournament=data.tournament||ST.tournament;
     ST.announcement=data.announcement||"";
     if(CURRENT_POOL){
@@ -6234,6 +6256,7 @@ function listenForUpdates(){
       CURRENT_POOL.tournament=ST.tournament;
       CURRENT_POOL.locked    =!!data.locked;
       CURRENT_POOL.r2Locked  =!!data.r2Locked;
+      CURRENT_POOL.r3Locked  =!!data.r3Locked;
       CURRENT_POOL.announcement=ST.announcement;
     }
     const remoteUsers=data.users||{};
@@ -6260,7 +6283,7 @@ function listenForUpdates(){
     });
     // Re-render on round changes (either direction) and admin unlocks so players
     // see a reopened round live, plus the usual standings/results refresh.
-    if(TAB==="lb"||TAB==="results"||ownChanged||prevPredRound!==ST.predRound||prevTournament!==ST.tournament||prevAnnounce!==ST.announcement||prevR2Locked!==!!ST.r2Locked) setTab();
+    if(TAB==="lb"||TAB==="results"||ownChanged||prevPredRound!==ST.predRound||prevTournament!==ST.tournament||prevAnnounce!==ST.announcement||prevR2Locked!==!!ST.r2Locked||prevR3Locked!==!!ST.r3Locked) setTab();
     const scoreEl=document.getElementById("scoreDisplay");
     if(scoreEl&&CU) scoreEl.textContent=calcScore(CU.key)+" pts";
   });

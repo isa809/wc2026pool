@@ -1309,18 +1309,21 @@ function countMissing(){
   } else {
     // Round 2: full bracket. R32 is seeded from the actual group results;
     // R16/QF/SF/Final cascade from the user's own picks (same as Round 1).
+    // A match that's already been PLAYED (result recorded) is locked — the user
+    // can't pick it — so it's never "missing"; otherwise they could never submit.
+    const played=k=>!!ST.results.ko[k];
     const actualR32=buildActualR32Matchups();
     for(let i=0;i<16;i++){
-      if(actualR32[i].home&&actualR32[i].away&&(!draft.ko||!draft.ko['r32_'+i])) miss++;
+      if(actualR32[i].home&&actualR32[i].away&&!played('r32_'+i)&&(!draft.ko||!draft.ko['r32_'+i])) miss++;
     }
     const r16Pairs=getR16Pairs(draft);
-    r16Pairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['r16_'+i])) miss++;});
+    r16Pairs.forEach((pair,i)=>{if(pair.a&&pair.b&&!played('r16_'+i)&&(!draft.ko||!draft.ko['r16_'+i])) miss++;});
     const qfPairs=getQFPairs(draft);
-    qfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['qf_'+i])) miss++;});
+    qfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&!played('qf_'+i)&&(!draft.ko||!draft.ko['qf_'+i])) miss++;});
     const sfPairs=getSFPairs(draft);
-    sfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&(!draft.ko||!draft.ko['sf_'+i])) miss++;});
+    sfPairs.forEach((pair,i)=>{if(pair.a&&pair.b&&!played('sf_'+i)&&(!draft.ko||!draft.ko['sf_'+i])) miss++;});
     const fp=getFinalPair(draft);
-    if(fp.a&&fp.b&&(!draft.ko||!draft.ko["final_0"])) miss++;
+    if(fp.a&&fp.b&&!played("final_0")&&(!draft.ko||!draft.ko["final_0"])) miss++;
   }
   return miss;
 }

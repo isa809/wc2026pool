@@ -1750,6 +1750,14 @@ function bindSuperAdmin(){
         const isSandbox=!!pool.sandbox;
         const lockBadge=isLocked?'&nbsp;·&nbsp;<span style="color:var(--red);font-weight:600">&#128274; Locked</span>':'';
         const sandboxBadge=isSandbox?'&nbsp;·&nbsp;<span style="color:var(--navy);font-weight:700">&#129514; Sandbox</span>':'';
+        // Per-pool round-submission lock for the pool's CURRENT prediction round (R2/R3).
+        const ppr=pool.predRound||1;
+        const rlField=ppr===2?'r2Locked':ppr===3?'r3Locked':null;
+        const rlOn=rlField?!!pool[rlField]:false;
+        const roundLockBadge=rlOn?'&nbsp;·&nbsp;<span style="color:var(--red);font-weight:600">&#128274; R'+ppr+' submissions locked</span>':'';
+        const roundLockBtn=rlField
+          ? '<button class="btn-sm'+(rlOn?' btn-danger':'')+'" data-poolround-lock="'+pool.code+'|'+ppr+'" data-locked="'+(rlOn?"1":"0")+'" title="'+(rlOn?'Round '+ppr+' submissions are LOCKED for this pool — click to reopen':'Lock Round '+ppr+' submissions for this pool only')+'">'+(rlOn?'&#128274; R'+ppr+' locked':'&#128275; Lock R'+ppr)+'</button>'
+          : '';
         html+=
           '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px" data-pool-card="'+pool.code+'">'+
             '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'+
@@ -1759,7 +1767,7 @@ function bindSuperAdmin(){
                   'Code: <strong>'+pool.code+'</strong> &nbsp;·&nbsp; '+
                   userCount+' player'+(userCount!==1?"s":"")+'&nbsp;·&nbsp;'+
                   '<span style="color:'+statusColor+'">Round '+pool.predRound+(pool.tournament==="done"?" · Complete":""  )+'</span>'+
-                  lockBadge+sandboxBadge+
+                  lockBadge+sandboxBadge+roundLockBadge+
                 '</div>'+
                 '<div style="font-size:11px;color:var(--muted);margin-top:2px">'+
                   'Join pwd: <strong>'+(pool.joinPassword||"—")+'</strong>'+
@@ -1768,6 +1776,7 @@ function bindSuperAdmin(){
               '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
                 '<button class="btn-sm" data-enter-pool="'+pool.code+'">&#9654; Enter</button>'+
                 '<button class="btn-sm'+(isLocked?'':' btn-danger')+'" data-lock-pool="'+pool.code+'" data-locked="'+(isLocked?"1":"0")+'">'+(isLocked?'&#128275; Unlock joining':'&#128274; Lock joining')+'</button>'+
+                roundLockBtn+
                 '<button class="btn-sm'+(isSandbox?' btn-navy':'')+'" data-sandbox-pool="'+pool.code+'" data-sandbox="'+(isSandbox?"1":"0")+'" title="Sandbox = this pool\'s local results never seed/leak up to Global Results, but global pushes still reach it">'+(isSandbox?'&#129514; Sandbox: ON':'&#129514; Mark sandbox')+'</button>'+
                 '<button class="btn-sm" data-rename-pool="'+pool.code+'" data-pool-name="'+pool.name+'">&#9998; Rename</button>'+
                 '<button class="btn-sm btn-danger" data-delete-pool="'+pool.code+'">&#128465; Delete</button>'+
@@ -1857,6 +1866,33 @@ function bindSuperAdmin(){
             } else {
               const pools=LS.get("pools")||{};
               if(pools[code]) pools[code].sandbox=willSandbox;
+              LS.set("pools",pools); done();
+            }
+          });
+        };
+      });
+
+      // ── Per-pool round-submission lock (R2/R3 for this pool only) ─────
+      el.querySelectorAll("[data-poolround-lock]").forEach(btn=>{
+        btn.onclick=()=>{
+          const parts=btn.dataset.poolroundLock.split("|");
+          const code=parts[0], r=parseInt(parts[1],10);
+          const field=r===2?'r2Locked':'r3Locked';
+          const willLock=btn.dataset.locked!=="1";
+          const card=el.querySelector("[data-pool-card='"+code+"']");
+          const name=card?card.querySelector("[style*='font-weight:700']").textContent:code;
+          const msg=willLock
+            ?'Lock Round '+r+' submissions for "'+name+'" only? Players in this pool can no longer submit Round '+r+'. Other pools and already-submitted brackets are unaffected.'
+            :'Re-open Round '+r+' submissions for "'+name+'"?';
+          showConfirmModal(msg,()=>{
+            btn.disabled=true; btn.textContent="Saving...";
+            const done=()=>renderPoolList();
+            if(IS_FIREBASE_CONFIGURED&&db){
+              db.ref("pools/"+code+"/"+field).set(willLock).then(done)
+                .catch(e=>{ btn.disabled=false; showConfirmModal("Error: "+e.message,()=>{}); });
+            } else {
+              const pools=LS.get("pools")||{};
+              if(pools[code]) pools[code][field]=willLock;
               LS.set("pools",pools); done();
             }
           });

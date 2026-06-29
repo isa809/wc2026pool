@@ -1076,7 +1076,10 @@ function getMergedPicks(userKey){
    real scoring shown in the points-breakdown card. */
 function koScoreMeta(userKey){
   const ko=getMergedPicks(userKey).ko||{};
-  const o={};
+  // __r2 carries the per-user R2-submission flag so the bracket's earned-points
+  // labels can gate BASE the same way calcScore does (non-slot key, read by
+  // matchHTML/fEarned). Bonus is team-based for everyone.
+  const o={__r2:koHasR2(userKey)};
   for(const k in ko){
     if(k.endsWith("_t3")) continue;
     const v=ko[k];
@@ -1154,8 +1157,17 @@ function koPickedSide(userKey,roundId,home,away,winner){
   return null;
 }
 
+/* True iff the user has FORMALLY submitted Round 2 (the `submitted` flag is true
+   — NOT merely that R2 picks exist). Knockout BASE points require this; the
+   team-based bonus is awarded to everyone regardless. READ-ONLY. */
+function koHasR2(userKey){
+  const u=ST.users[userKey];
+  return !!(u&&u.rounds&&u.rounds[2]&&u.rounds[2].submitted===true);
+}
+
 function calcScore(userKey){
   const picks=getMergedPicks(userKey);
+  const r2=koHasR2(userKey);
   let pts=0;
   for(const mid in ST.results.group){
     const raw=ST.results.group[mid];
@@ -1177,8 +1189,9 @@ function calcScore(userKey){
     if(!sc) continue;
     // Bonus follows the TEAM, not the slot: credit base + early-pick bonus iff
     // the player picked the winning team to win SOME match in this KO round.
+    // BASE requires R2 submission; bonus is team-based for everyone.
     const br=koBonusRound(userKey,rnd,res);
-    if(br) pts+=sc.base+(sc.bonus[br-1]||0);
+    if(br) pts+=(r2?sc.base:0)+(sc.bonus[br-1]||0);
   }
   return pts;
 }
@@ -1188,6 +1201,7 @@ function calcScore(userKey){
    byStage and byRound each sum to the same total calcScore returns. */
 function roundPoints(userKey){
   const picks=getMergedPicks(userKey);
+  const r2=koHasR2(userKey);
   const byRound={1:0,2:0,3:0};
   const byStage={group:0,r32:0,r16:0,qf:0,sf:0,third:0,final:0};
   let total=0;
@@ -1209,7 +1223,7 @@ function roundPoints(userKey){
     // team was FIRST picked for this KO round.
     const br=koBonusRound(userKey,rnd,res);
     if(!br) continue;
-    const pt=sc.base+(sc.bonus[br-1]||0);
+    const pt=(r2?sc.base:0)+(sc.bonus[br-1]||0); // base requires R2 submission
     byStage[rnd]+=pt; byRound[br]=(byRound[br]||0)+pt; total+=pt;
   }
   return {byRound,byStage,total};
@@ -2220,7 +2234,7 @@ function movePointsForMatch(userKey,picks,m){
   // Team-based credit: the winner `res` scores iff it's in the player's merged
   // round picks (ruling a), with the early-pick bonus from the earliest round.
   const br=koBonusRound(userKey,m.key.split("_")[0],res);
-  const pts=br?sc.base+(sc.bonus[br-1]||0):0;
+  const pts=br?(koHasR2(userKey)?sc.base:0)+(sc.bonus[br-1]||0):0; // base requires R2 submission
   return {picked:!!pickedTeam,pts,outcome:pickedTeam||null,hit:!!br};
 }
 
@@ -2382,7 +2396,7 @@ function moveHypoPoints(userKey,picks,it,outcome){
   // Team-based, exactly like calcScore: if `outcome` (the hypothetical winner) is
   // in the player's merged round winners, they earn base + earliest-pick bonus.
   const br=koBonusRound(userKey,it.rid,outcome);
-  return br ? sc.base+(sc.bonus[br-1]||0) : 0;
+  return br ? (koHasR2(userKey)?sc.base:0)+(sc.bonus[br-1]||0) : 0; // base requires R2 submission
 }
 
 /* Possible outcomes for one upcoming match. Group -> W/D/L; KO -> each
@@ -3696,6 +3710,9 @@ function koStageBonusText(rid){
 }
 function renderBracket(draft,locked,pr,meta){
   meta=meta||{};
+  // Knockout BASE points require R2 submission (carried via meta.__r2 from
+  // koScoreMeta). Bonus is team-based for everyone. Default true if unset.
+  const r2Base=(meta.__r2!==false);
   const open=PR_OPEN[pr]||[];
   const isR1=(pr===1);
   const standings=isR1?predictedStandings(draft.group||{}):null;
@@ -3816,9 +3833,10 @@ function renderBracket(draft,locked,pr,meta){
     if(meta[key]&&meta[key].team===pickTeam) pickRoundStd=meta[key].round;
     function earnedLabel(team){
       if(!result||!team||!sc) return '';
-      const eb=sc.bonus[pickRoundStd-1]||0;const mx=sc.base+eb;
+      const baseV=r2Base?sc.base:0;
+      const eb=sc.bonus[pickRoundStd-1]||0;const mx=baseV+eb;
       if(pickTeam===team&&result===team)
-        return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+sc.base+' base'+(eb>0?' +'+eb+' R'+pickRoundStd+' bonus':'')+'</span>';
+        return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+baseV+' base'+(eb>0?' +'+eb+' R'+pickRoundStd+' bonus':'')+'</span>';
       if(pickTeam===team)
         return '<span style="font-size:9px;color:var(--red);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>0 pts</b><br>missed '+mx+'</span>';
       return '';
@@ -3974,9 +3992,10 @@ function renderBracket(draft,locked,pr,meta){
   if(meta['final_0']&&meta['final_0'].team===fpick) fpickRound=meta['final_0'].round;
   function fEarned(team){
     if(!fres||!team) return '';
-    const eb=SC.ko.final.bonus[fpickRound-1]||0;const mx=SC.ko.final.base+eb;
+    const fBaseV=r2Base?SC.ko.final.base:0;
+    const eb=SC.ko.final.bonus[fpickRound-1]||0;const mx=fBaseV+eb;
     if(fpick===team&&fres===team)
-      return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+SC.ko.final.base+' base'+(eb>0?' +'+eb+' R'+fpickRound+' bonus':'')+'</span>';
+      return '<span style="font-size:9px;color:var(--green);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>+'+mx+' pts</b><br>'+fBaseV+' base'+(eb>0?' +'+eb+' R'+fpickRound+' bonus':'')+'</span>';
     if(fpick===team)
       return '<span style="font-size:9px;color:var(--red);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>0 pts</b><br>missed '+mx+'</span>';
     return '';
@@ -4102,10 +4121,11 @@ function _ptsTag(pts){
    round from koBonusRound (the same source calcScore uses); null/0 → not credited,
    so fall back to the standard "0 pts" treatment. base + bonus always equals the
    match's scored total. */
-function _koPtsTag(rid,br){
+function _koPtsTag(rid,br,r2Base){
   if(!br) return _ptsTag(0);
-  const sc=SC.ko[rid];const bonus=sc.bonus[br-1]||0;const total=sc.base+bonus;
-  const txt='+'+sc.base+' base'+(bonus>0?' <span style="opacity:.85">+'+bonus+' R'+br+' bonus</span>':'');
+  const sc=SC.ko[rid];const base=r2Base?sc.base:0;const bonus=sc.bonus[br-1]||0;const total=base+bonus;
+  if(total===0) return _ptsTag(0);
+  const txt='+'+base+' base'+(bonus>0?' <span style="opacity:.85">+'+bonus+' R'+br+' bonus</span>':'');
   return '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;margin-left:auto;color:var(--green);background:#e8f5ee" title="'+total+' pts total">'+txt+'</span>';
 }
 function _matchShell(top,inner){
@@ -4157,7 +4177,7 @@ function koPickRow(mp,rid,i,userKey){
     // winner scores iff the player backed it to advance this round. Shown as the
     // base + early-pick bonus split.
     const br=koBonusRound(userKey,rid,res);
-    inner+=_koPtsTag(rid,br);
+    inner+=_koPtsTag(rid,br,koHasR2(userKey));
   } else inner+='<span style="font-size:10px;color:var(--muted)">TBD</span>';
   return _matchShell(top,inner);
 }
@@ -4338,7 +4358,7 @@ function renderR1Pills(userKey){
     teams.forEach(function(team){
       let bg='transparent',color='var(--muted)',border='var(--border)',icon='',extra='';
       if(won.has(team)){
-        const br=koBonusRound(userKey,R,team);const pts=br?sc.base+(sc.bonus[br-1]||0):0;
+        const br=koBonusRound(userKey,R,team);const pts=br?(koHasR2(userKey)?sc.base:0)+(sc.bonus[br-1]||0):0;
         bg='#e8f5ee';color='var(--green)';border='#bfe6cf';icon='&#10003; ';
         extra=pts?' <b>+'+pts+'</b>':'';
       } else if(reached.has(team)){
@@ -4367,7 +4387,7 @@ function renderR3Champion(userKey){
   let champBlock;
   if(champ){
     const fres=ST.results.ko['final_0']||null;let line='';
-    if(fres&&fres===champ){const br=koBonusRound(userKey,'final',champ);const pts=br?SC.ko.final.base+(SC.ko.final.bonus[br-1]||0):0;
+    if(fres&&fres===champ){const br=koBonusRound(userKey,'final',champ);const pts=br?(koHasR2(userKey)?SC.ko.final.base:0)+(SC.ko.final.bonus[br-1]||0):0;
       line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:4px">&#10003; Correct champion'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
     else if(fres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">&#10007; '+fres+' won the title</div>';}
     champBlock='<div style="font-size:15px;font-weight:700;color:var(--navy)">&#127942; Ultimate champion pick: '+champ+'</div>'+line;
@@ -4376,7 +4396,7 @@ function renderR3Champion(userKey){
   let thirdBlock;
   if(third){
     const tres=ST.results.ko['third_0']||null;let line='';
-    if(tres&&tres===third){const br=koBonusRound(userKey,'third',third);const pts=br?SC.ko.third.base+(SC.ko.third.bonus[br-1]||0):0;
+    if(tres&&tres===third){const br=koBonusRound(userKey,'third',third);const pts=br?(koHasR2(userKey)?SC.ko.third.base:0)+(SC.ko.third.bonus[br-1]||0):0;
       line='<div style="font-size:12px;color:var(--green);font-weight:700;margin-top:4px">&#10003; Correct 3rd place'+(pts?' &middot; +'+pts+' pts':'')+'</div>';}
     else if(tres){line='<div style="font-size:12px;color:var(--red);font-weight:700;margin-top:4px">&#10007; '+tres+' took 3rd</div>';}
     thirdBlock='<div style="font-size:13px;font-weight:700;color:var(--navy)">&#129353; 3rd-place pick: '+third+'</div>'+line;
@@ -4458,7 +4478,7 @@ function renderResultsBody(userKey,selfView){
     function slotPts(team){
       if(!team||team==="TBD") return null;
       const sc=SC.ko[rid];
-      const base=sc.base;
+      const base=koHasR2(userKey)?sc.base:0; // base requires R2 submission
       // Bonus follows the team across rounds (matches calcScore/koScoreMeta).
       const br=koBonusRound(userKey,rid,team);
       const bonus=br?(sc.bonus[br-1]||0):0;
@@ -4496,7 +4516,7 @@ function renderResultsBody(userKey,selfView){
       } else if(pts&&pts.missed){
         // Wrong pick — show 0 and what was missed
         const sc=SC.ko[rid];
-        const maxPts=sc.base+(pts.bonusRound?(sc.bonus[pts.bonusRound-1]||0):0);
+        const maxPts=(koHasR2(userKey)?sc.base:0)+(pts.bonusRound?(sc.bonus[pts.bonusRound-1]||0):0);
         ptsLabel='<div style="font-size:9px;color:var(--red);line-height:1.3;text-align:right">'+
           '<div style="font-weight:700">0 pts</div>'+
           '<div style="opacity:.8">missed '+maxPts+'</div>'+
@@ -4558,7 +4578,7 @@ function renderResultsBody(userKey,selfView){
     const picked=koBonusRound(userKey,"final",team)!=null; // team-based, matches scoring
     const wrong=fres&&picked&&fres!==team;
     const fsc=SC.ko["final"];
-    const base=fsc.base;
+    const base=koHasR2(userKey)?fsc.base:0; // base requires R2 submission
     // Final bonus follows the team across rounds (R1 +3 / R2 +2 / R3 +0).
     const fbr=koBonusRound(userKey,"final",team);
     const bonus=fbr?(fsc.bonus[fbr-1]||0):0;
@@ -4589,6 +4609,7 @@ function renderResultsBody(userKey,selfView){
   }
 
   // ── My total KO score (bonus follows the team across rounds) ─────────
+  const r2Base=koHasR2(userKey);
   let koScore=0;
   for(const key in ST.results.ko){
     if(key.endsWith("_t3")) continue;
@@ -4597,7 +4618,7 @@ function renderResultsBody(userKey,selfView){
     const rnd=key.split("_")[0];
     const sc=SC.ko[rnd];if(!sc) continue;
     const br=koBonusRound(userKey,rnd,res);
-    if(br) koScore+=sc.base+(sc.bonus[br-1]||0);
+    if(br) koScore+=(r2Base?sc.base:0)+(sc.bonus[br-1]||0);
   }
   let groupScore=0;
   for(const mid in ST.results.group){

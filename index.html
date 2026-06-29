@@ -1344,35 +1344,47 @@ function resolvePick(draft,baseKey){
   return val;
 }
 
+/* Effective winner of a feeding match for the bracket cascade: if the match has
+   already been PLAYED (result recorded) the ACTUAL winner flows forward so a user
+   who's submitting late still sees the real teams and can make the remaining
+   downstream picks; otherwise it's the user's own predicted winner. (Scoring is
+   team-based and independent of this — see koBonusRound.) */
+function feederWinner(draft,key){
+  return ST.results.ko[key] || resolvePick(draft,key);
+}
+
 /* All KO cascades use the corrected real-bracket feed map (KO_FEED) so a user's
-   predicted winners flow forward exactly as the tournament bracket does. */
+   predicted winners flow forward exactly as the tournament bracket does — and
+   played-match winners flow in automatically (feederWinner). */
 function getR16Pairs(draft){
   const pairs=[];
-  for(let i=0;i<8;i++){ const f=KO_FEED.r16[i]; pairs.push({a:resolvePick(draft,'r32_'+f[0]),b:resolvePick(draft,'r32_'+f[1])}); }
+  for(let i=0;i<8;i++){ const f=KO_FEED.r16[i]; pairs.push({a:feederWinner(draft,'r32_'+f[0]),b:feederWinner(draft,'r32_'+f[1])}); }
   return pairs;
 }
 
 function getQFPairs(draft){
   const pairs=[];
-  for(let i=0;i<4;i++){ const f=KO_FEED.qf[i]; pairs.push({a:resolvePick(draft,'r16_'+f[0]),b:resolvePick(draft,'r16_'+f[1])}); }
+  for(let i=0;i<4;i++){ const f=KO_FEED.qf[i]; pairs.push({a:feederWinner(draft,'r16_'+f[0]),b:feederWinner(draft,'r16_'+f[1])}); }
   return pairs;
 }
 
 function getSFPairs(draft){
-  return [0,1].map(i=>{ const f=KO_FEED.sf[i]; return {a:resolvePick(draft,'qf_'+f[0]),b:resolvePick(draft,'qf_'+f[1])}; });
+  return [0,1].map(i=>{ const f=KO_FEED.sf[i]; return {a:feederWinner(draft,'qf_'+f[0]),b:feederWinner(draft,'qf_'+f[1])}; });
 }
 
 function getFinalPair(draft){
   const f=KO_FEED.final[0];
-  return {a:resolvePick(draft,'sf_'+f[0]),b:resolvePick(draft,'sf_'+f[1])};
+  return {a:feederWinner(draft,'sf_'+f[0]),b:feederWinner(draft,'sf_'+f[1])};
 }
 
-/* 3rd-place pair for a player's bracket = the two SF LOSERS (the team in each SF
-   matchup the player did NOT pick to win). */
+/* 3rd-place pair = the two SF LOSERS. For a PLAYED semifinal the loser is the
+   actual non-winner; otherwise it's the team the player didn't pick to win. */
 function getThirdPair(draft){
   const sf=getSFPairs(draft);
   const loser=i=>{
     const p=sf[i]; if(!p||!p.a||!p.b) return null;
+    const actual=ST.results.ko['sf_'+i];
+    if(actual) return actual===p.a?p.b:(actual===p.b?p.a:null);
     const pick=resolvePick(draft,'sf_'+i); if(!pick) return null;
     return pick===p.a?p.b:(pick===p.b?p.a:null);
   };

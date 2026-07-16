@@ -711,6 +711,7 @@ let VIEWING=null,VIEWING_ROUND=1;
 /* Presentational view state (no persistence): Results tab round/date toggle,
    and Standings inline pick-panel expansion + per-player round/date sub-toggle. */
 let RESULTS_VIEW="round";
+let LB_SEGMENT="overall"; // Standings ranking segment: overall | group | ko
 let GKO_EDIT=null; // Global Results: key (e.g. "r32_5"/"final_0") of the open matchup-override form, or null
 const EXPANDED={};
 const PLAYER_VIEW={};
@@ -1227,6 +1228,15 @@ function roundPoints(userKey){
     byStage[rnd]+=pt; byRound[br]=(byRound[br]||0)+pt; total+=pt;
   }
   return {byRound,byStage,total};
+}
+
+/* Group vs knockout subtotals for the segmented standings. Derived from
+   roundPoints — which mirrors calcScore exactly (same team-based bonus and
+   R2-base-gate) — so group + ko always equals calcScore's total. READ-ONLY. */
+function calcScoreBreakdown(userKey){
+  const rp=roundPoints(userKey);
+  const group=rp.byStage.group;
+  return {group,ko:rp.total-group,total:rp.total};
 }
 
 /* A points-breakdown card. focusRound (optional) adds a line attributing points
@@ -4839,12 +4849,19 @@ function renderResultsBody(userKey,selfView){
 
 function renderLB(){
   const pr=ST.predRound;
+  // Ranking segment: overall (default, = calcScore), group-only, or knockout-only.
+  const seg=(LB_SEGMENT==='group'||LB_SEGMENT==='ko')?LB_SEGMENT:'overall';
   const scores=Object.entries(ST.users)
     .filter(([k,u])=>!isSuperAdminEntry(k,u))
-    .map(([k,u])=>({
-      key:k,name:u.displayName,score:calcScore(k),
-      submitted:getUserRound(k,pr).submitted
-    })).sort((a,b)=>b.score-a.score);
+    .map(([k,u])=>{
+      const bd=calcScoreBreakdown(k);
+      return {
+        key:k,name:u.displayName,
+        score:seg==='group'?bd.group:seg==='ko'?bd.ko:bd.total,
+        total:bd.total,
+        submitted:getUserRound(k,pr).submitted
+      };
+    }).sort((a,b)=>b.score-a.score);
   if(!scores.length) return`<div class="card"><p style="text-align:center;padding:20px;color:var(--muted)">No players yet.</p></div>`;
   // You can view other players' predictions only after submitting the current
   // open round yourself (super admin can always view).
@@ -4855,6 +4872,10 @@ function renderLB(){
   </div>`:``;
   html+=`<div class="card">`;
   if(ST.tournament==="done") html+=`<div class="notice" style="margin-bottom:12px">🏆 Final standings</div>`;
+  // [Overall][Group][Knockout] ranking segment toggle.
+  const segBtn=(val,label)=>`<button data-lb-segment="${val}" style="flex:1;border:none;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;${seg===val?'background:var(--navy);color:#fff':'background:transparent;color:var(--navy)'}">${label}</button>`;
+  html+=`<div style="display:flex;border:1px solid var(--navy);border-radius:8px;overflow:hidden;max-width:320px;margin-bottom:6px">${segBtn('overall','Overall')+segBtn('group','Group')+segBtn('ko','Knockout')}</div>`;
+  if(seg!=='overall') html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Ranked by ${seg==='group'?'group-stage':'knockout'} points only</div>`;
   html+=`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">&#128065; Tap a player to expand their predictions &amp; points</div>`;
   scores.forEach((p,i)=>{
     const isMe=p.key===CU.key;
@@ -4865,7 +4886,7 @@ function renderLB(){
       <div class="av" style="${isMe?"background:var(--navy);color:#fff":""}">${p.name.charAt(0).toUpperCase()}</div>
       <span style="flex:1;font-size:14px;font-weight:${isMe?600:400}">${p.name}${isMe?" (you)":""}${p.submitted?`<span class="submitted-badge">R${pr} ✓</span>`:""}</span>
       <span class="lb-pts">${p.score}</span>
-      <span style="font-size:11px;color:var(--muted);margin-left:2px">pts</span>
+      <span style="font-size:11px;color:var(--muted);margin-left:2px">pts${seg!=='overall'?`<span style="display:block;font-size:9px;line-height:1.2">${p.total} overall</span>`:''}</span>
       ${arrow}
     </div>`;
     if(expanded){
@@ -5592,6 +5613,8 @@ function bindMain(){
   document.querySelectorAll(".tab[data-tab]").forEach(t=>{t.onclick=()=>{
     // Results tab always opens on the bracket ("By round"); the date view is opt-in.
     if(t.dataset.tab==="results") RESULTS_VIEW="round";
+    // Standings always opens ranked by Overall; segments are opt-in per visit.
+    if(t.dataset.tab==="standings") LB_SEGMENT="overall";
     TAB=t.dataset.tab;VIEWING=null;setTab();
   };});
   bindTab();
@@ -5826,6 +5849,11 @@ function bindTab(){
   /* Results tab: By round / By date toggle */
   document.querySelectorAll("[data-results-view]").forEach(b=>{
     b.onclick=()=>{ RESULTS_VIEW=b.dataset.resultsView; setTab(); };
+  });
+
+  /* Standings: Overall / Group / Knockout ranking segment toggle */
+  document.querySelectorAll("[data-lb-segment]").forEach(b=>{
+    b.onclick=()=>{ LB_SEGMENT=b.dataset.lbSegment; setTab(); };
   });
 
   /* standings → expand/collapse a player's inline pick panel */

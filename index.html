@@ -3671,37 +3671,41 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
   var result=ST.results.ko['final_0']||null;
   var sc=SC.ko['final'];
   var bonus=sc.bonus[pr-1]||0;
+  // 3rd-place data (the two SF LOSERS)
+  var t3teams=getKOMatchTeams('third',0);
+  var t3a=t3teams?t3teams.home:null, t3b=t3teams?t3teams.away:null;
+  var t3raw=(draft.ko&&draft.ko['third_0'])||null;
+  var t3pick=t3raw?(typeof t3raw==='object'?t3raw.team:t3raw):null;
+  var t3res=ST.results.ko['third_0']||null;
+  var tsc=SC.ko['third']; var tbonus=tsc.bonus[pr-1]||0;
+  var thirdAvailable=!!(t3a&&t3a!=='TBD'&&t3b&&t3b!=='TBD');
+  // The picks stay editable until the player submits, or this is a read-only view.
+  var dis=submitted||forceLocked;
   var html="";
 
   if(submitted){
-    html+="<div class=\"notice-green\"><strong>Round 3 submitted!</strong> Your champion pick is locked. Good luck!</div>";
+    html+="<div class=\"notice-green\"><strong>Round 3 submitted!</strong> Your picks are locked. Good luck!</div>";
   } else if(!forceLocked){
     html+="<div class=\"pr-bar\"><div><div class=\"pr-title\">Prediction Round 3 of 3 &#8212; The Final</div>";
-    html+="<div class=\"pr-sub\">Pick your World Cup champion from the two finalists.</div></div></div>";
+    html+="<div class=\"pr-sub\">Pick your World Cup champion and the 3rd-place winner, then submit.</div></div></div>";
   }
 
+  // ── Champion card ──
   html+="<div class=\"card\" style=\"text-align:center;padding:28px 20px\">";
   html+="<div class=\"winner-crown\" style=\"font-size:48px;margin-bottom:8px\">&#127942;</div>";
   html+="<div class=\"final-champion-title\">World Cup Champion</div>";
   html+="<div style=\"font-size:12px;color:var(--muted);margin-bottom:20px\">+"+sc.base+" pts base"+(bonus>0?" + +"+bonus+" Round 3 bonus":"")+" if correct</div>";
-
   if(!finalA||!finalB){
     html+="<div class=\"notice-blue\" style=\"text-align:left\">The two finalists will appear here automatically once the semi-final results are entered. Check back after the semi-finals! Admin will unlock Round 3 once the SF matches are played.</div>";
   } else {
-    function finalCls(team){
+    var finalCls=function(team){
       if(!team) return "";
       if(result){if(team===result&&pick===team)return "correct";if(team===pick&&team!==result)return "wrong";}
       if(pick===team) return "selected";
       return "";
-    }
-    // The pick stays open until the player submits it, or this is a read-only
-    // view. Neither the final RESULT being entered nor the tournament being
-    // marked complete locks an unsubmitted player out — otherwise a straggler
-    // who never submitted Round 3 could never complete it.
-    var dis=submitted||forceLocked;
-    html+="<div style=\"display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:16px\">";
-
-    function teamCard(team){
+    };
+    html+="<div style=\"display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:0\">";
+    var teamCard=function(team){
       var cls=finalCls(team);
       var borderColor=pick===team?"var(--navy)":cls==="correct"?"var(--green)":cls==="wrong"?"var(--red)":"var(--border)";
       var bg=pick===team?"var(--navy)":cls==="correct"?"#e8f5ee":cls==="wrong"?"#fdecea":"var(--card)";
@@ -3716,42 +3720,20 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
       if(result===team) card+="<div style=\"font-size:11px;color:var(--green);margin-top:4px;font-weight:600\">&#127942; Champions!</div>";
       card+="</div>";
       return card;
-    }
-
+    };
     html+=teamCard(finalA);
     html+="<div style=\"display:flex;align-items:center;font-family:Bebas Neue,sans-serif;font-size:28px;color:var(--muted);padding:0 4px\">VS</div>";
     html+=teamCard(finalB);
     html+="</div>";
   }
-
-  if(!submitted&&finalA&&finalB&&!forceLocked){
-    if(r3SubmitLocked()){
-      html+="<div class=\"notice-red\" style=\"margin-bottom:0\"><strong>&#128274; Round 3 submissions are closed.</strong><br>The organizer has locked the final pick — it can no longer be submitted.</div>";
-    } else if(!pick){
-      html+="<div class=\"notice-red\" style=\"margin-bottom:8px\">Pick your champion to submit.</div>";
-      html+="<button class=\"btn-submit\" disabled>Submit Final Pick</button>";
-    } else {
-      html+="<div class=\"notice-green\" style=\"margin-bottom:8px\">You picked <strong>"+pick+"</strong> to win the World Cup!</div>";
-      html+="<button class=\"btn-submit\" id=\"submitBtn\">Submit Final Pick &#8212; Lock It In</button>";
-      html+="<p style=\"font-size:11px;color:var(--muted);margin-top:8px\">Once submitted your final pick is permanently locked.</p>";
-    }
-  }
-
   html+="</div>";
 
-  // ── 3rd-place pick (R2/R3): the two SF LOSERS ──
-  var t3teams=getKOMatchTeams('third',0);
-  var t3a=t3teams?t3teams.home:null, t3b=t3teams?t3teams.away:null;
-  var t3raw=(draft.ko&&draft.ko['third_0'])||null;
-  var t3pick=t3raw?(typeof t3raw==='object'?t3raw.team:t3raw):null;
-  var t3res=ST.results.ko['third_0']||null;
-  var tsc=SC.ko['third']; var tbonus=tsc.bonus[pr-1]||0;
-  var t3dis=submitted||forceLocked;
+  // ── 3rd-place card (BEFORE the submit button) ──
   html+="<div class=\"card\" style=\"text-align:center;padding:20px\">";
   html+="<div style=\"font-size:30px;margin-bottom:4px\">&#129353;</div>";
   html+="<div class=\"final-champion-title\" style=\"font-size:16px\">3rd-Place Match</div>";
   html+="<div style=\"font-size:12px;color:var(--muted);margin-bottom:16px\">+"+tsc.base+" pts base"+(tbonus>0?" + +"+tbonus+" Round "+pr+" bonus":"")+" if correct &middot; the two semi-final losers</div>";
-  if(!t3a||t3a==='TBD'||!t3b||t3b==='TBD'){
+  if(!thirdAvailable){
     html+="<div class=\"notice-blue\" style=\"text-align:left\">The two semi-final losers will appear here automatically once the semi-final results are entered.</div>";
   } else {
     var t3cls=function(team){ if(!team)return""; if(t3res){if(team===t3res&&t3pick===team)return"correct";if(team===t3pick&&team!==t3res)return"wrong";} if(t3pick===team)return"selected"; return""; };
@@ -3762,8 +3744,8 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
       var bg=t3pick===team?"var(--navy)":cls==="correct"?"#e8f5ee":cls==="wrong"?"#fdecea":"var(--card)";
       var textColor=t3pick===team?"#fff":cls==="correct"?"var(--green)":cls==="wrong"?"var(--red)":"var(--text)";
       var card="<div class=\"final-pick-card "+cls+"\"";
-      if(!t3dis) card+=" data-ko=\"third_0\" data-team=\""+team+"\"";
-      card+=" style=\"min-width:120px;flex:1;max-width:180px;border:2px solid "+borderColor+";border-radius:12px;padding:16px 12px;cursor:"+(t3dis?"default":"pointer")+";background:"+bg+"\">";
+      if(!dis) card+=" data-ko=\"third_0\" data-team=\""+team+"\"";
+      card+=" style=\"min-width:120px;flex:1;max-width:180px;border:2px solid "+borderColor+";border-radius:12px;padding:16px 12px;cursor:"+(dis?"default":"pointer")+";background:"+bg+"\">";
       card+="<div style=\"font-size:14px;font-weight:600;color:"+textColor+"\">"+team+"</div>";
       if(t3pick===team&&!t3res) card+="<div style=\"font-size:11px;color:#aac;margin-top:4px\">Your pick &#10003;</div>";
       if(t3res===team) card+="<div style=\"font-size:11px;color:var(--green);margin-top:4px;font-weight:600\">&#129353; 3rd place!</div>";
@@ -3773,6 +3755,28 @@ function renderFinalPickOnly(draft,submitted,pr,forceLocked){
     html+="</div>";
   }
   html+="</div>";
+
+  // ── Submit (AFTER both picks) — requires champion AND, when available, 3rd place ──
+  if(!submitted&&finalA&&finalB&&!forceLocked){
+    html+="<div class=\"card\" style=\"text-align:center;padding:16px 20px\">";
+    if(r3SubmitLocked()){
+      html+="<div class=\"notice-red\" style=\"margin-bottom:0\"><strong>&#128274; Round 3 submissions are closed.</strong><br>The organizer has locked the final pick — it can no longer be submitted.</div>";
+    } else {
+      var needChamp=!pick, needThird=thirdAvailable&&!t3pick;
+      if(needChamp||needThird){
+        var missing=[];
+        if(needChamp) missing.push("your champion");
+        if(needThird) missing.push("your 3rd-place winner");
+        html+="<div class=\"notice-red\" style=\"margin-bottom:8px\">Pick "+missing.join(" and ")+" to submit.</div>";
+        html+="<button class=\"btn-submit\" disabled>Submit Round 3 Picks</button>";
+      } else {
+        html+="<div class=\"notice-green\" style=\"margin-bottom:8px\">Champion: <strong>"+pick+"</strong>"+(t3pick?" &middot; 3rd place: <strong>"+t3pick+"</strong>":"")+"</div>";
+        html+="<button class=\"btn-submit\" id=\"submitBtn\">Submit Round 3 Picks &#8212; Lock It In</button>";
+        html+="<p style=\"font-size:11px;color:var(--muted);margin-top:8px\">Once submitted your picks are permanently locked.</p>";
+      }
+    }
+    html+="</div>";
+  }
 
   return html;
 }

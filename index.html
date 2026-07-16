@@ -3963,6 +3963,20 @@ function renderBracket(draft,locked,pr,meta){
     const ptsB=pickTeam===teamB&&teamB&&bonusTxt?'<span class="slot-pts">'+bonusTxt+'</span>':'';
     const extraA=result?earnedLabel(teamA):ptsA;
     const extraB=result?earnedLabel(teamB):ptsB;
+    // Never silently drop a diverged pick: when the player's stored pick for
+    // this slot is NOT one of the displayed teams (their team was knocked out
+    // before this match, or the matchup isn't set yet), show it muted under
+    // the match. R2+ only — the R1 bracket shows the player's own predicted
+    // cascade, where the pick is by construction one of the two teams.
+    let ghostPick='';
+    if(!isR1){
+      let pkShown=pickTeam==='__t3__'?((draft.ko&&draft.ko[key+'_t3'])||null):pickTeam;
+      if(pkShown&&pkShown!==teamA&&pkShown!==teamB){
+        ghostPick=pending
+          ?'<div style="font-size:9px;color:var(--muted);border-top:1px solid var(--border);padding:3px 7px;background:#f7f8fa">Pick: <b>'+pkShown+'</b> &middot; match TBD</div>'
+          :'<div style="font-size:9px;color:var(--muted);border-top:1px solid var(--border);padding:3px 7px;background:#eef0f3">'+(result?'<span style="color:var(--red)">&#10007;</span> ':'')+'Pick: <b>'+pkShown+'</b> &middot; didn&#39;t reach this match</div>';
+      }
+    }
     return '<div class="brd-match'+(isLocked?' locked':'')+'">'+
       '<div class="brd-slot '+slotCls(teamA)+(!pending&&!isLocked&&isOpen&&!result?' hoverable':'')+' '+(dis2?'disabled':'')+'" data-ko="'+key+'" data-team="'+(teamA||'')+'">'+
         '<span class="slot-name" title="'+(teamA||'')+'">'+dispA+'</span>'+extraA+
@@ -3970,6 +3984,7 @@ function renderBracket(draft,locked,pr,meta){
       '<div class="brd-slot '+slotCls(teamB)+(!pending&&!isLocked&&isOpen&&!result?' hoverable':'')+' '+(dis2?'disabled':'')+'" data-ko="'+key+'" data-team="'+(teamB||'')+'">'+
         '<span class="slot-name" title="'+(teamB||'')+'">'+dispB+'</span>'+extraB+
       '</div>'+
+      ghostPick+
       globalKoMetaLine(roundId,idx)+
     '</div>';
   }
@@ -4116,6 +4131,18 @@ function renderBracket(draft,locked,pr,meta){
       return '<span style="font-size:9px;color:var(--red);line-height:1.2;text-align:right;flex-shrink:0;margin-left:4px"><b>0 pts</b><br>missed '+mx+'</span>';
     return '';
   }
+  // Champion pick that isn't one of the two displayed finalists (their team
+  // was knocked out earlier) — shown muted under the final box instead of
+  // vanishing. R2+ only (R1 shows the player's own predicted cascade).
+  let fGhost='';
+  if(!isR1&&fpick){
+    const fKnownA=(ta&&ta!=='TBD')?ta:null,fKnownB=(tb&&tb!=='TBD')?tb:null;
+    if(fpick!==fKnownA&&fpick!==fKnownB){
+      fGhost=(fKnownA&&fKnownB)
+        ?'<div style="font-size:10px;color:var(--muted);text-align:center;margin-top:6px">'+(fres?'<span style="color:var(--red)">&#10007;</span> ':'')+'Pick: <strong>'+fpick+'</strong> &middot; didn&#39;t reach the Final</div>'
+        :'<div style="font-size:10px;color:var(--muted);text-align:center;margin-top:6px">Pick: <strong>'+fpick+'</strong> &middot; match TBD</div>';
+    }
+  }
   html+='<div class="brd-col">'+
     '<div class="brd-col-title">The Final<span class="pts">+'+SC.ko.final.base+' pts &middot; '+fBonusTxt+'</span></div>'+
     '<div class="brd-final">'+
@@ -4130,6 +4157,7 @@ function renderBracket(draft,locked,pr,meta){
         '</div>'+
         globalKoMetaLine('final',0)+
       '</div>'+
+      fGhost+
     '</div>'+
   '</div>';
 
@@ -4281,11 +4309,24 @@ function koPickRow(mp,rid,i,userKey){
   // advance this round? (Re-derived so the shown pick belongs to this match and
   // agrees with the team-based scoring — see koPickedSide.)
   const pick=koPickedSide(userKey,rid,home,away,res);
+  // Fallback: the player's stored pick for this slot when their team isn't in
+  // the actual matchup (knocked out earlier, or matchup not set yet) — shown
+  // muted instead of vanishing into "No pick".
+  let ghost=null;
+  if(!pick){
+    const p=mp.ko[key];let t=p?(typeof p==='object'?p.team:p):null;
+    if(t==='__t3__')t=mp.ko[key+'_t3']||null;
+    if(t&&t!==home&&t!==away) ghost=t;
+  }
   const rLbl={r32:'R32',r16:'R16',qf:'QF',sf:'SF',third:'3rd',final:'Final'}[rid]||rid;
   const top='<div style="font-size:12px;font-weight:600">'+home+' <span style="color:var(--muted);font-weight:400">vs</span> '+away+
     '<span style="font-size:10px;color:var(--muted);font-weight:400;margin-left:6px">'+rLbl+'</span></div>';
   let inner='';
   if(pick) inner+=_pickBadge('Pick: '+pick,'var(--navy)','var(--navygl)');
+  else if(ghost){
+    const matchSet=home!=='TBD'&&away!=='TBD';
+    inner+=_pickBadge((res?'&#10007; ':'')+'Pick: '+ghost+(matchSet?' &middot; didn&#39;t reach':''),'var(--muted)','#eef0f3');
+  }
   else inner+='<span style="font-size:10px;color:var(--muted);font-style:italic">No pick</span>';
   if(res){
     inner+=_pickBadge('Winner: '+res,'#444','#eef0f3');
@@ -4651,7 +4692,16 @@ function renderResultsBody(userKey,selfView){
       '</div>';
     }
 
-    return '<div class="brd-match">'+buildSlot(home,true)+buildSlot(away,false)+'</div>';
+    // The player's stored pick for this slot when it isn't one of the actual
+    // teams (their bracket diverged) — shown muted instead of vanishing.
+    let ghost='';
+    {
+      const p=mp.ko[key];let t=p?(typeof p==='object'?p.team:p):null;
+      if(t==='__t3__')t=mp.ko[key+'_t3']||null;
+      if(t&&home&&away&&home!=='TBD'&&away!=='TBD'&&t!==home&&t!==away)
+        ghost='<div style="font-size:9px;color:var(--muted);border-top:1px solid var(--border);padding:3px 7px;background:#eef0f3">'+(res?'<span style="color:var(--red)">&#10007;</span> ':'')+pw.charAt(0).toUpperCase()+pw.slice(1)+': <b>'+t+'</b> &middot; didn&#39;t reach this match</div>';
+    }
+    return '<div class="brd-match">'+buildSlot(home,true)+buildSlot(away,false)+ghost+'</div>';
   }
 
   // ── Build result bracket columns ──────────────────────────────────
@@ -4773,7 +4823,9 @@ function renderResultsBody(userKey,selfView){
           finalSlot(fhome)+
           finalSlot(faway)+
         '</div>'+
-        (fmyPickTeam&&!fres?'<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">'+(selfView?"Your":"Their")+' pick: <strong>'+fmyPickTeam+'</strong></div>':'')+
+        (fmyPickTeam&&fmyPickTeam!==fhome&&fmyPickTeam!==faway
+          ?'<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">'+(fres?'<span style="color:var(--red)">&#10007;</span> ':'')+(selfView?"Your":"Their")+' pick: <strong>'+fmyPickTeam+'</strong>'+((fhome&&faway)?' &middot; didn&#39;t reach the Final':'')+'</div>'
+          :(fmyPickTeam&&!fres?'<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px">'+(selfView?"Your":"Their")+' pick: <strong>'+fmyPickTeam+'</strong></div>':''))+
       '</div>'+
     '</div>';
     html+='</div></div></div>';

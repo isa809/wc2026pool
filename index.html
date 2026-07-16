@@ -5439,9 +5439,17 @@ function renderAdminPlayers(){
     if(!rd||!rd.picks) return 0;
     return (rd.picks.group?Object.keys(rd.picks.group).length:0)+(rd.picks.ko?Object.keys(rd.picks.ko).length:0);
   };
+  // Flag players who submitted Round 3 but have NO 3rd-place pick (in any round's
+  // merged picks). Only meaningful once the two SF losers are known.
+  const thirdAvailable=(function(){const t=getKOMatchTeams('third',0);return !!(t&&t.home&&t.home!=='TBD'&&t.away&&t.away!=='TBD');})();
+  const missingThirdKeys=new Set();
+  if(thirdAvailable){
+    users.forEach(([key])=>{ if(getUserRound(key,3).submitted && !(getMergedPicks(key).ko||{})['third_0']) missingThirdKeys.add(key); });
+  }
   let html=`<div class="card">
     <div class="card-title">Player management</div>
-    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.${isSuper?' &mdash; <strong>Submit R1/R2/Final</strong> locks that round for a player who made picks but missed the submit button (only flips the flag; never changes picks).':''}</div>`;
+    <div class="notice-blue">Reset PINs for players who forget theirs. Remove test accounts before going live.${isSuper?' &mdash; <strong>Submit R1/R2/Final</strong> locks that round for a player who made picks but missed the submit button (only flips the flag; never changes picks).':''}</div>
+    ${missingThirdKeys.size>0?`<div class="notice-red" style="margin-top:8px"><strong>&#9888;&#65039; ${missingThirdKeys.size} player${missingThirdKeys.size!==1?'s':''} submitted Round 3 without a 3rd-place pick.</strong> Flagged below &mdash; use &#128275; Final to unlock their Round 3 so they can add it, then it re-submits.</div>`:''}`;
 
   if(!users.length){
     html+=`<p style="font-size:13px;color:var(--muted);padding:10px 0">No players registered yet.</p>`;
@@ -5465,16 +5473,21 @@ function renderAdminPlayers(){
         const rl=r===3?'Final':'Round '+r, lab=r===3?'Final':'R'+r;
         return `<button class="btn-sm" data-submit-round="${key}:${r}" title="Submit &amp; lock this player's ${rl} picks for them" style="border-color:var(--fifa-gold);color:#7a5c10;background:#fdf6e3">Submit ${lab}</button>`;
       }).join(''):'';
-      // Unlock controls — only for rounds the player has actually submitted.
+      const missThird=missingThirdKeys.has(key);
+      // Unlock controls — only for rounds the player has actually submitted. The
+      // Final unlock is highlighted for players missing a 3rd-place pick.
       let unlockBtns='';
       subs.forEach((s,i)=>{
         const r=i+1;
-        if(s) unlockBtns+=`<button class="btn-sm" data-unlock="${key}:${r}" title="Unlock this player's ${lbl(r)} so they can edit and resubmit" style="font-size:11px;padding:3px 7px">&#128275; ${lbl(r)}</button>`;
+        if(!s) return;
+        const hot=(r===3&&missThird);
+        unlockBtns+=`<button class="btn-sm${hot?' btn-danger':''}" data-unlock="${key}:${r}" title="${hot?'This player has no 3rd-place pick — unlock their Final so they can add it':`Unlock this player's ${lbl(r)} so they can edit and resubmit`}" style="font-size:11px;padding:3px 7px">&#128275; ${lbl(r)}</button>`;
       });
-      html+=`<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+      const missThirdBadge=missThird?'<span style="color:var(--red);font-weight:700;font-size:10px;margin-left:6px;white-space:nowrap" title="Submitted Round 3 without a 3rd-place pick">&#9888;&#65039; no 3rd pick</span>':'';
+      html+=`<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);flex-wrap:wrap${missThird?';background:#fdecea':''}">
         <div class="av">${u.displayName.charAt(0).toUpperCase()}</div>
         <div style="flex:1;min-width:120px">
-          <div style="font-size:13px;font-weight:600">${u.displayName}</div>
+          <div style="font-size:13px;font-weight:600">${u.displayName}${missThirdBadge}</div>
           <div style="font-size:11px;color:var(--muted)">${score} pts &nbsp;${chips}</div>
         </div>
         ${submitBtns}
